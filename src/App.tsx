@@ -16,7 +16,7 @@ function getSB(): SupabaseClient | null {
 
 // ╔══════════════════════════════════════════════════════════════╗
 // ║                         TYPES                                ║
-// ══════════════════════════════════════════════════════════════╝
+// ╚══════════════════════════════════════════════════════════════╝
 interface Lnk { id: string; label: string; url: string }
 interface Rev { date: string; ok: boolean; lvl: number }
 interface Topic {
@@ -27,7 +27,7 @@ interface Topic {
 interface Exam {
   id: string; name: string; subject: string; cat: string; date: string;
   desc: string; links: Lnk[]; max: number; got: number; pct: number;
-  grade: string; answer: string; ai: string; attachments: FileAttachment[]; created: string;
+  grade: string; answer: string; ai: string; attachments: any[]; created: string;
 }
 interface MemItem {
   id: string; title: string; cat: string; content: string; tags: string[];
@@ -35,9 +35,6 @@ interface MemItem {
 }
 interface DailyTask {
   id: string; date: string; answerWriting: boolean; mcqSolved: number; caMcqSolved: number; notes: string;
-}
-interface FileAttachment {
-  id: string; name: string; type: string; size: number; dataUrl: string; textContent?: string;
 }
 interface AppUser { id: string; email: string; name: string; mode: "supabase" | "local" }
 type Tab = "topics" | "exams" | "memory" | "stats" | "daily";
@@ -66,7 +63,7 @@ function genSalt() { const a = new Uint8Array(16); crypto.getRandomValues(a); re
 
 // ╔══════════════════════════════════════════════════════════════╗
 // ║              SYNCED STORE WITH REALTIME                      ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ══════════════════════════════════════════════════════════════╝
 function useSyncRealtime<T>(key: string, init: T, userId: string | null): [T, (fn: T | ((p: T) => T)) => void, boolean] {
   const lsKey = userId ? `sr_${userId}_${key}` : `sr_${key}`;
   const [val, setVal] = useState<T>(() => { try { const s = localStorage.getItem(lsKey); return s ? JSON.parse(s) : init; } catch { return init; } });
@@ -302,7 +299,7 @@ export default function App() {
 
 // ╔══════════════════════════════════════════════════════════════╗
 // ║                     DASHBOARD                                ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ══════════════════════════════════════════════════════════════╝
 function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   const userId = user.id;
   const [topics, setTopics, topicsLoading] = useSyncRealtime<Topic[]>("topics", [], userId);
@@ -355,6 +352,7 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
 
   const fTopics = useMemo(() => { let r = [...topics]; if (q) { const s = q.toLowerCase(); r = r.filter(t => t.title.toLowerCase().includes(s) || t.subject.toLowerCase().includes(s) || t.cat.toLowerCase().includes(s)); } if (cf !== "all") r = r.filter(t => t.cat === cf); r.sort((a, b) => daysDiff(a.next) - daysDiff(b.next)); return r; }, [topics, q, cf]);
   const fExams = useMemo(() => { let r = [...exams]; if (q) { const s = q.toLowerCase(); r = r.filter(e => e.name.toLowerCase().includes(s) || e.subject.toLowerCase().includes(s) || e.cat.toLowerCase().includes(s)); } if (cf !== "all") r = r.filter(e => e.cat === cf); r.sort((a, b) => b.date.localeCompare(a.date)); return r; }, [exams, q, cf]);
+  const fMemory = useMemo(() => { let r = [...memory]; if (q) { const s = q.toLowerCase(); r = r.filter(m => m.title.toLowerCase().includes(s) || m.tags.some(t => t.toLowerCase().includes(s)) || m.cat.toLowerCase().includes(s)); } if (cf !== "all") r = r.filter(m => m.cat === cf); r.sort((a, b) => b.updated.localeCompare(a.updated)); return r; }, [memory, q, cf]);
 
   const over = topics.filter(t => getSt(t) === "over").length;
   const due = topics.filter(t => getSt(t) === "due").length;
@@ -377,15 +375,12 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
   const saveExam = useCallback((e: Exam) => { setExams(p => { const i = p.findIndex(x => x.id === e.id); return i >= 0 ? p.map(x => x.id === e.id ? e : x) : [e, ...p]; }); setModal(null); setEditE(null); }, []);
   const delExam = useCallback((id: string) => { if (confirm("Delete?")) setExams(p => p.filter(e => e.id !== id)); }, []);
   
-  const runAI = useCallback(async (eid: string, fileData?: string) => {
+  const runAI = useCallback(async (eid: string) => {
     const ex = exams.find(e => e.id === eid);
-    if (!ex && !fileData) return;
+    if (!ex?.answer) return;
     setAiId(eid);
     try {
-      let prompt = `Evaluate this answer for "${ex?.name || 'Exam'}" (${ex?.subject || 'Subject'}).\n1.Rating/10 2.Strengths 3.Weaknesses 4.Missing 5.Tips\n\n`;
-      if (ex?.answer) prompt += `Answer:\n${ex.answer}\n\n`;
-      if (fileData) prompt += `Attached file/image content:\n${fileData}\n\n`;
-      
+      const prompt = `Evaluate this answer for "${ex.name}" (${ex.subject}).\n1.Rating/10 2.Strengths 3.Weaknesses 4.Missing 5.Tips\n\n${ex.answer}`;
       const r = await (window as any).puter.ai.chat(prompt, { model: "perplexity/sonar" });
       const txt = typeof r === "string" ? r : r?.message?.content || "Error";
       setExams(p => p.map(e => e.id === eid ? { ...e, ai: txt } : e));
@@ -417,42 +412,108 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
     return (<div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-indigo-50/30 flex items-center justify-center"><div className="text-center"><div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-3xl shadow-xl inline-block mb-4 animate-pulse"><span className="text-3xl">🧠</span></div><p className="text-gray-500 text-sm">Syncing your data...</p></div></div>);
   }
 
+  // ═══════════════ TOPIC FORM ═══════════════
+  const TopicForm = () => {
+    const [title, sT] = useState(editT?.title || "");
+    const [sub, sS] = useState(editT?.subject || "");
+    const [cat, sC] = useState(editT?.cat || "");
+    const [desc, sD] = useState(editT?.desc || "");
+    const [dt, sDt] = useState(editT?.date || iso());
+    const [lnk, sL] = useState<Lnk[]>(editT?.links?.length ? editT.links : [{ id: uid(), label: "", url: "" }]);
+    const [nS, sNS] = useState(""); const [showNS, sSNS] = useState(false);
+    const [nC, sNC] = useState(""); const [showNC, sSNC] = useState(false);
+    const save = (e: React.FormEvent) => { e.preventDefault(); if (!title.trim()) return; const f = isFut(dt); saveTopic({ id: editT?.id || uid(), title: title.trim(), subject: sub, cat, desc, date: dt, studied: editT?.studied ?? (f ? null : true), links: lnk.filter(l => l.url.trim()), revs: editT?.revs || [], next: f ? dt : nxt(dt, editT?.lvl || 0), lvl: editT?.lvl || 0, sched: f, created: editT?.created || new Date().toISOString() }); };
+    return (
+      <Modal onClose={() => { setModal(null); setEditT(null); }}>
+        <form onSubmit={save} className="p-6 space-y-4">
+          <h2 className="text-xl font-bold">{editT ? "Edit Topic" : "Add Topic"}</h2>
+          <input value={title} onChange={e => sT(e.target.value)} required placeholder="Title" className="w-full px-4 py-3 rounded-xl border outline-none" />
+          {!showNS ? (<div className="flex gap-2"><select value={sub} onChange={e => sS(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Select...</option>{subs.map(s => <option key={s}>{s}</option>)}</select><button type="button" onClick={() => sSNS(true)} className="px-4 rounded-xl border border-dashed border-indigo-300 text-indigo-600"><IPlus sz={16} /></button></div>) : (<div className="flex gap-2"><input value={nS} onChange={e => sNS(e.target.value)} placeholder="New subject..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addSub(nS.trim()); sS(nS.trim()); sNS(""); sSNS(false); }} className="px-4 py-3 rounded-xl bg-indigo-500 text-white">Add</button><button type="button" onClick={() => sSNS(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
+          {!showNC ? (<div className="flex flex-wrap gap-2">{cats.map(c => <button key={c} type="button" onClick={() => sC(cat === c ? "" : c)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border-2 ${cat === c ? "bg-indigo-100 text-indigo-700 border-indigo-300" : "bg-white text-gray-600 border-gray-200"}`}>{c}</button>)}<button type="button" onClick={() => sSNC(true)} className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 border-dashed border-indigo-300 text-indigo-600">+ Add</button></div>) : (<div className="flex gap-2"><input value={nC} onChange={e => sNC(e.target.value)} placeholder="New category..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addCat(nC.trim()); sC(nC.trim()); sNC(""); sSNC(false); }} className="px-4 py-3 rounded-xl bg-indigo-500 text-white">Add</button><button type="button" onClick={() => sSNC(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
+          <input type="date" value={dt} onChange={e => sDt(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" />
+          <textarea value={desc} onChange={e => sD(e.target.value)} rows={3} placeholder="Notes..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />
+          {lnk.map((l, i) => (<div key={l.id} className="flex gap-2"><input value={l.label} onChange={e => sL(lnk.map(x => x.id === l.id ? { ...x, label: e.target.value } : x))} placeholder="Label" className="flex-1 px-3 py-2.5 rounded-xl border text-sm outline-none" /><input value={l.url} onChange={e => sL(lnk.map(x => x.id === l.id ? { ...x, url: e.target.value } : x))} placeholder="https://..." className="flex-1 px-3 py-2.5 rounded-xl border text-sm outline-none" />{lnk.length > 1 && <button type="button" onClick={() => sL(lnk.filter(x => x.id !== l.id))} className="p-2 text-gray-300 hover:text-red-500"><IX sz={14} /></button>}</div>))}
+          <button type="button" onClick={() => sL([...lnk, { id: uid(), label: "", url: "" }])} className="text-sm font-medium text-indigo-600">+ Add link</button>
+          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditT(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600">Save</button></div>
+        </form>
+      </Modal>
+    );
+  };
+
+  // ═══════════════ EXAM FORM ═══════════════
+  const ExamForm = () => {
+    const [name, sN] = useState(editE?.name || "");
+    const [sub, sS] = useState(editE?.subject || "");
+    const [cat, sC] = useState(editE?.cat || "");
+    const [dt, sDt] = useState(editE?.date || iso());
+    const [desc, sD] = useState(editE?.desc || "");
+    const [mx, sMx] = useState(String(editE?.max ?? 100));
+    const [gt, sGt] = useState(String(editE?.got ?? ""));
+    const [ans, sAns] = useState(editE?.answer || "");
+    const [lnk, sL] = useState<Lnk[]>(editE?.links?.length ? editE.links : [{ id: uid(), label: "", url: "" }]);
+    const [nS, sNS] = useState(""); const [showNS, sSNS] = useState(false);
+    const save = (e: React.FormEvent) => { e.preventDefault(); if (!name.trim()) return; const m = +mx || 100, g = +gt || 0, p = m > 0 ? Math.round(g / m * 100) : 0; saveExam({ id: editE?.id || uid(), name: name.trim(), subject: sub, cat, date: dt, desc, links: lnk.filter(l => l.url.trim()), max: m, got: g, pct: p, grade: calcGr(p), answer: ans, ai: editE?.ai || "", attachments: [], created: editE?.created || new Date().toISOString() }); };
+    return (
+      <Modal onClose={() => { setModal(null); setEditE(null); }}>
+        <form onSubmit={save} className="p-6 space-y-4">
+          <h2 className="text-xl font-bold">{editE ? "Edit Exam" : "Add Exam"}</h2>
+          <input value={name} onChange={e => sN(e.target.value)} required placeholder="Exam Name" className="w-full px-4 py-3 rounded-xl border outline-none" />
+          {!showNS ? (<div className="flex gap-2"><select value={sub} onChange={e => sS(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Select...</option>{examSubs.map(s => <option key={s}>{s}</option>)}</select><button type="button" onClick={() => sSNS(true)} className="px-4 rounded-xl border border-dashed border-amber-300 text-amber-600"><IPlus sz={16} /></button></div>) : (<div className="flex gap-2"><input value={nS} onChange={e => sNS(e.target.value)} placeholder="New subject..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addExamSub(nS.trim()); sS(nS.trim()); sNS(""); sSNS(false); }} className="px-4 py-3 rounded-xl bg-amber-500 text-white">Add</button><button type="button" onClick={() => sSNS(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
+          <select value={cat} onChange={e => sC(e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Category</option>{cats.map(c => <option key={c}>{c}</option>)}</select>
+          <input type="date" value={dt} onChange={e => sDt(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" />
+          <div className="grid grid-cols-2 gap-4"><input type="number" value={mx} onChange={e => sMx(e.target.value)} placeholder="Max Marks" className="px-4 py-3 rounded-xl border outline-none" /><input type="number" value={gt} onChange={e => sGt(e.target.value)} placeholder="Obtained" className="px-4 py-3 rounded-xl border outline-none" /></div>
+          <textarea value={ans} onChange={e => sAns(e.target.value)} rows={4} placeholder="Answer for AI analysis..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />
+          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditE(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-amber-600">Save</button></div>
+        </form>
+      </Modal>
+    );
+  };
+
+  // ═══════════════ MEMORY FORM ═══════════════
+  const MemoryForm = () => {
+    const [title, sT] = useState(editM?.title || "");
+    const [cat, sC] = useState(editM?.cat || "");
+    const [content, sCont] = useState(editM?.content || "");
+    const [tags, sTags] = useState(editM?.tags?.join(", ") || "");
+    const [nC, sNC] = useState(""); const [showNC, sSNC] = useState(false);
+    const save = (e: React.FormEvent) => { e.preventDefault(); if (!title.trim()) return; saveMem({ id: editM?.id || uid(), title: title.trim(), cat, content, tags: tags.split(",").map(t => t.trim()).filter(Boolean), created: editM?.created || new Date().toISOString(), updated: new Date().toISOString() }); };
+    return (
+      <Modal onClose={() => { setModal(null); setEditM(null); }}>
+        <form onSubmit={save} className="p-6 space-y-4">
+          <h2 className="text-xl font-bold">{editM ? "Edit Memory" : "Add Memory"}</h2>
+          <input value={title} onChange={e => sT(e.target.value)} required placeholder="Title" className="w-full px-4 py-3 rounded-xl border outline-none" />
+          {!showNC ? (<div className="flex flex-wrap gap-2">{memCats.map(c => <button key={c} type="button" onClick={() => sC(cat === c ? "" : c)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border-2 ${cat === c ? "bg-teal-100 text-teal-700 border-teal-300" : "bg-white text-gray-600 border-gray-200"}`}>{c}</button>)}<button type="button" onClick={() => sSNC(true)} className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 border-dashed border-teal-300 text-teal-600">+ Add</button></div>) : (<div className="flex gap-2"><input value={nC} onChange={e => sNC(e.target.value)} placeholder="New category..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addMemCat(nC.trim()); sC(nC.trim()); sNC(""); sSNC(false); }} className="px-4 py-3 rounded-xl bg-teal-500 text-white">Add</button><button type="button" onClick={() => sSNC(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
+          <textarea value={content} onChange={e => sCont(e.target.value)} rows={6} placeholder="Content..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />
+          <input value={tags} onChange={e => sTags(e.target.value)} placeholder="Tags (comma separated)" className="w-full px-4 py-3 rounded-xl border outline-none" />
+          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditM(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600">Save</button></div>
+        </form>
+      </Modal>
+    );
+  };
+
   // ═══════════════ STATS TAB ═══════════════
   const StatsTab = () => {
     const catStats = useMemo(() => {
-      const stats: Record<string, { total: number; avg: number; best: number; exams: Exam[] }> = {};
-      cats.forEach(c => stats[c] = { total: 0, avg: 0, best: 0, exams: [] });
+      const stats: Record<string, { total: number; avg: number; best: number }> = {};
+      cats.forEach(c => stats[c] = { total: 0, avg: 0, best: 0 });
       exams.forEach(e => {
-        if (!stats[e.cat]) stats[e.cat] = { total: 0, avg: 0, best: 0, exams: [] };
+        if (!stats[e.cat]) stats[e.cat] = { total: 0, avg: 0, best: 0 };
         stats[e.cat].total++;
-        stats[e.cat].exams.push(e);
-        stats[e.cat].avg = Math.round(stats[e.cat].exams.reduce((sum, ex) => sum + ex.pct, 0) / stats[e.cat].total);
+        stats[e.cat].avg = Math.round((stats[e.cat].avg * (stats[e.cat].total - 1) + e.pct) / stats[e.cat].total);
         stats[e.cat].best = Math.max(stats[e.cat].best, e.pct);
       });
       return stats;
     }, [exams, cats]);
-
-    const recentTrend = useMemo(() => {
-      const last7 = exams.slice(0, 7).reverse();
-      return last7.map(e => ({ date: fmt(e.date), pct: e.pct, name: e.name }));
-    }, [exams]);
-
     const overallAvg = exams.length > 0 ? Math.round(exams.reduce((sum, e) => sum + e.pct, 0) / exams.length) : 0;
-    const totalExams = exams.length;
-    const improvement = recentTrend.length >= 2 ? recentTrend[recentTrend.length - 1].pct - recentTrend[0].pct : 0;
-
     return (
       <div className="space-y-6">
-        {/* Overview Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[["Total Exams", totalExams, "📝", "blue"], ["Average Score", `${overallAvg}%`, "📊", "purple"], ["Best Score", `${Math.max(...exams.map(e => e.pct), 0)}%`, "🏆", "amber"], ["Improvement", `${improvement >= 0 ? "+" : ""}${improvement}%`, improvement >= 0 ? "📈" : "📉", improvement >= 0 ? "emerald" : "red"]].map(([l, v, e, c]) => (
+          {[["Total Exams", String(exams.length), "📝", "blue"], ["Average", `${overallAvg}%`, "📊", "purple"], ["Best", `${Math.max(0, ...exams.map(e => e.pct))}%`, "🏆", "amber"], ["Categories", String(cats.length), "📁", "emerald"]].map(([l, v, e, c]) => (
             <div key={l} className={`bg-white rounded-2xl border p-4 shadow-sm border-l-4 border-l-${c}-400`}>
               <div className="flex items-center gap-3"><div className={`bg-${c}-50 p-2.5 rounded-xl`}><span className="text-lg">{e}</span></div><div><p className="text-2xl font-bold text-gray-900">{v}</p><p className="text-xs text-gray-500">{l}</p></div></div>
             </div>
           ))}
         </div>
-
-        {/* Category Performance */}
         <div className="bg-white rounded-2xl border p-5 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 mb-4">📊 Performance by Category</h3>
           <div className="space-y-4">
@@ -469,31 +530,14 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             })}
           </div>
         </div>
-
-        {/* Recent Trend */}
-        <div className="bg-white rounded-2xl border p-5 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">📈 Recent Performance</h3>
-          {recentTrend.length > 0 ? (
-            <div className="flex items-end gap-2 h-40">
-              {recentTrend.map((t, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <div className={`w-full rounded-t-lg ${t.pct >= 70 ? "bg-emerald-500" : t.pct >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ height: `${t.pct * 1.2}px` }} />
-                  <span className="text-[10px] text-gray-500 rotate-45">{t.date.split(" ")[0]}</span>
-                </div>
-              ))}
-            </div>
-          ) : <p className="text-gray-500 text-center py-8">No exams yet</p>}
-        </div>
-
-        {/* Google Calendar Integration */}
         <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 p-5">
-          <h3 className="text-lg font-bold text-blue-900 mb-3">📅 Add to Google Calendar</h3>
-          <p className="text-sm text-blue-700 mb-4">Create study reminders and exam planning events</p>
+          <h3 className="text-lg font-bold text-blue-900 mb-3">📅 Google Calendar</h3>
+          <p className="text-sm text-blue-700 mb-4">Add study reminders</p>
           <div className="space-y-3">
-            {["Daily Study Session", "Weekly Revision", "Mock Test"].map((title, i) => {
+            {["Daily Study", "Weekly Revision", "Mock Test"].map((title, i) => {
               const start = new Date(); start.setDate(start.getDate() + i); start.setHours(9 + i, 0, 0);
               const end = new Date(start); end.setHours(start.getHours() + 1);
-              const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${start.toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${end.toISOString().replace(/[-:]/g, "").split(".")[0]}Z&details=SpaceRev+Study+Session`;
+              const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${start.toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${end.toISOString().replace(/[-:]/g, "").split(".")[0]}Z`;
               return (
                 <a key={title} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-3 bg-white rounded-xl border border-blue-200 hover:border-blue-400 transition-colors">
                   <div className="flex items-center gap-3"><div className="bg-blue-100 p-2 rounded-lg"><ICalendar sz={16} cls="text-blue-600" /></div><span className="text-sm font-medium text-gray-700">{title}</span></div>
@@ -511,43 +555,17 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
   const DailyTracker = () => {
     const [selectedDate, setSelectedDate] = useState(iso());
     const task = getDaily(selectedDate) || { id: uid(), date: selectedDate, answerWriting: false, mcqSolved: 0, caMcqSolved: 0, notes: "" };
-
-    const updateTask = (updates: Partial<DailyTask>) => {
-      saveDaily({ ...task, ...updates });
-    };
-
-    const weekDays = useMemo(() => {
-      const days = [];
-      for (let i = -3; i <= 3; i++) {
-        const d = new Date(); d.setDate(d.getDate() + i);
-        days.push(d.toISOString().split("T")[0]);
-      }
-      return days;
-    }, []);
-
-    const streak = useMemo(() => {
-      let count = 0;
-      for (let i = 0; i < 30; i++) {
-        const d = new Date(); d.setDate(d.getDate() - i);
-        const ds = d.toISOString().split("T")[0];
-        const t = daily.find(x => x.date === ds);
-        if (t && (t.answerWriting || t.mcqSolved > 0 || t.caMcqSolved > 0)) count++;
-        else break;
-      }
-      return count;
-    }, [daily]);
-
+    const updateTask = (updates: Partial<DailyTask>) => { saveDaily({ ...task, ...updates }); };
+    const weekDays = useMemo(() => { const days = []; for (let i = -3; i <= 3; i++) { const d = new Date(); d.setDate(d.getDate() + i); days.push(d.toISOString().split("T")[0]); } return days; }, []);
+    const streak = useMemo(() => { let count = 0; for (let i = 0; i < 30; i++) { const d = new Date(); d.setDate(d.getDate() - i); const ds = d.toISOString().split("T")[0]; const t = daily.find(x => x.date === ds); if (t && (t.answerWriting || t.mcqSolved > 0 || t.caMcqSolved > 0)) count++; else break; } return count; }, [daily]);
     return (
       <div className="space-y-6">
-        {/* Streak Card */}
         <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl border border-orange-200 p-5">
           <div className="flex items-center justify-between">
             <div><h3 className="text-lg font-bold text-orange-900">🔥 Current Streak</h3><p className="text-sm text-orange-700">Days with at least one task completed</p></div>
             <div className="text-4xl font-black text-orange-600">{streak} <span className="text-lg font-medium text-orange-500">days</span></div>
           </div>
         </div>
-
-        {/* Date Selector */}
         <div className="bg-white rounded-2xl border p-4 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 mb-3">📅 Select Date</h3>
           <div className="flex gap-2 overflow-x-auto pb-2">
@@ -567,32 +585,21 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             })}
           </div>
         </div>
-
-        {/* Tasks */}
         <div className="bg-white rounded-2xl border p-5 shadow-sm space-y-4">
           <h3 className="text-lg font-bold text-gray-900">✅ Daily Tasks - {fmt(selectedDate)}</h3>
-          
           <div className="flex items-center justify-between p-4 bg-indigo-50 rounded-xl border border-indigo-100">
             <div className="flex items-center gap-3"><div className={`p-2 rounded-lg ${task.answerWriting ? "bg-indigo-500" : "bg-white border border-indigo-300"}`}><ICheck sz={16} cls={task.answerWriting ? "text-white" : "text-indigo-400"} /></div><span className="font-medium text-gray-700">Answer Writing Practice</span></div>
             <button onClick={() => updateTask({ answerWriting: !task.answerWriting })} className={`px-4 py-2 rounded-xl text-sm font-semibold ${task.answerWriting ? "bg-indigo-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>{task.answerWriting ? "✓ Completed" : "Mark Done"}</button>
           </div>
-
           <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
             <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-emerald-500"><ITarget sz={16} cls="text-white" /></div><span className="font-medium text-gray-700">MCQs Solved</span></div><span className="text-2xl font-bold text-emerald-600">{task.mcqSolved}</span></div>
             <input type="range" min="0" max="100" value={task.mcqSolved} onChange={e => updateTask({ mcqSolved: +e.target.value })} className="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer" />
-            <div className="flex justify-between text-xs text-emerald-600 mt-1"><span>0</span><span>50</span><span>100</span></div>
           </div>
-
           <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
             <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-amber-500"><ITarget sz={16} cls="text-white" /></div><span className="font-medium text-gray-700">CA MCQs Solved</span></div><span className="text-2xl font-bold text-amber-600">{task.caMcqSolved}</span></div>
             <input type="range" min="0" max="50" value={task.caMcqSolved} onChange={e => updateTask({ caMcqSolved: +e.target.value })} className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer" />
-            <div className="flex justify-between text-xs text-amber-600 mt-1"><span>0</span><span>25</span><span>50</span></div>
           </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1.5">📝 Notes</label>
-            <textarea value={task.notes} onChange={e => updateTask({ notes: e.target.value })} placeholder="What did you study today? Key takeaways..." rows={3} className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none resize-none" />
-          </div>
+          <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">📝 Notes</label><textarea value={task.notes} onChange={e => updateTask({ notes: e.target.value })} placeholder="What did you study today?" rows={3} className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none resize-none" /></div>
         </div>
       </div>
     );
@@ -612,6 +619,7 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-50 border text-xs"><IUser sz={14} cls="text-gray-400" /><span className="font-medium text-gray-600">{user.name}</span></div>
             {user.mode === "supabase" && <span className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold"><ICloud sz={12} />Synced</span>}
             <button onClick={onLogout} className="p-2.5 rounded-xl text-gray-400 hover:text-red-500 hover:bg-red-50"><ILogOut sz={18} /></button>
+            <button onClick={() => { if (tab === "topics") { setEditT(null); setModal("topic"); } else if (tab === "exams") { setEditE(null); setModal("exam"); } else if (tab === "memory") { setEditM(null); setModal("memory"); } }} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600"><IPlus sz={16} /></button>
           </div>
         </div>
       </header>
@@ -620,7 +628,7 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
         {/* TABS */}
         <div className="flex gap-2 bg-white rounded-2xl p-1.5 border w-fit">
           {[["topics", "📚", "Topics", topics.length], ["exams", "📝", "Exams", exams.length], ["memory", "🧠", "Memory", memory.length], ["stats", "📊", "Stats", exams.length], ["daily", "✅", "Daily", daily.length]].map(([k, e, l, n]) => (
-            <button key={k} onClick={() => { setTab(k as Tab); setCf("all"); }} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold ${tab === k ? (k === "topics" ? "bg-indigo-100 text-indigo-700" : k === "exams" ? "bg-amber-100 text-amber-700" : k === "stats" ? "bg-purple-100 text-purple-700" : k === "daily" ? "bg-emerald-100 text-emerald-700" : "bg-teal-100 text-teal-700") : "text-gray-500 hover:bg-gray-50"}`}>{e} {l}{n > 0 && <span className="text-[10px] opacity-70">({n})</span>}</button>
+            <button key={k} onClick={() => { setTab(k as Tab); setCf("all"); }} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold ${tab === k ? (k === "topics" ? "bg-indigo-100 text-indigo-700" : k === "exams" ? "bg-amber-100 text-amber-700" : k === "stats" ? "bg-purple-100 text-purple-700" : k === "daily" ? "bg-emerald-100 text-emerald-700" : "bg-teal-100 text-teal-700") : "text-gray-500 hover:bg-gray-50"}`}>{e} {l}{Number(n) > 0 && <span className="text-[10px] opacity-70">({n})</span>}</button>
           ))}
         </div>
 
@@ -707,7 +715,7 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
                       {e.links.length > 0 && <div className="flex flex-wrap gap-2">{e.links.map(l => <a key={l.id} href={l.url} target="_blank" className="px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm">🔗 {l.label || "Link"}</a>)}</div>}
                       <div className="bg-purple-50 rounded-2xl p-5 border border-purple-100">
                         <h4 className="text-sm font-bold text-purple-800 mb-3">✨ AI Analysis</h4>
-                        {e.answer || e.attachments?.length ? (<><button onClick={() => runAI(e.id)} disabled={aiId === e.id} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-600 disabled:opacity-50 mb-3">{aiId === e.id ? "⏳ Analyzing..." : "✨ Analyze with AI"}</button>{e.ai && <div className="bg-white border border-purple-200 rounded-xl p-4 text-sm text-gray-800 whitespace-pre-wrap">{e.ai}</div>}</>) : <p className="text-sm text-purple-600/70">Add answer text or upload file to enable AI</p>}
+                        {e.answer ? (<><button onClick={() => runAI(e.id)} disabled={aiId === e.id} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-600 disabled:opacity-50 mb-3">{aiId === e.id ? "⏳ Analyzing..." : "✨ Analyze with AI"}</button>{e.ai && <div className="bg-white border border-purple-200 rounded-xl p-4 text-sm text-gray-800 whitespace-pre-wrap">{e.ai}</div>}</>) : <p className="text-sm text-purple-600/70">Add answer text to enable AI</p>}
                       </div>
                     </div>
                   )}
