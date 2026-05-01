@@ -1,47 +1,21 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                        SUPABASE                              ║
-// ╚══════════════════════════════════════════════════════════════╝
 const SB_URL = import.meta.env.VITE_SUPABASE_URL || "";
 const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 const HAS_SB = !!(SB_URL && SB_KEY && SB_URL.includes("supabase.co"));
 let sb: SupabaseClient | null = null;
-function getSB(): SupabaseClient | null {
-  if (!HAS_SB) return null;
-  if (!sb) sb = createClient(SB_URL, SB_KEY);
-  return sb;
-}
+function getSB(): SupabaseClient | null { if (!HAS_SB) return null; if (!sb) sb = createClient(SB_URL, SB_KEY); return sb; }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                         TYPES                                ║
-// ╚══════════════════════════════════════════════════════════════╝
 interface Lnk { id: string; label: string; url: string }
 interface Rev { date: string; ok: boolean; lvl: number }
-interface Topic {
-  id: string; title: string; subject: string; cat: string; desc: string;
-  date: string; studied: boolean | null; links: Lnk[]; revs: Rev[];
-  next: string; lvl: number; sched: boolean; created: string;
-}
-interface Exam {
-  id: string; name: string; subject: string; cat: string; date: string;
-  desc: string; links: Lnk[]; max: number; got: number; pct: number;
-  grade: string; answer: string; ai: string; attachments: any[]; created: string;
-}
-interface MemItem {
-  id: string; title: string; cat: string; content: string; tags: string[];
-  created: string; updated: string;
-}
-interface DailyTask {
-  id: string; date: string; answerWriting: boolean; mcqSolved: number; caMcqSolved: number; notes: string;
-}
+interface Topic { id: string; title: string; subject: string; cat: string; desc: string; date: string; studied: boolean | null; links: Lnk[]; revs: Rev[]; next: string; lvl: number; sched: boolean; created: string; }
+interface Exam { id: string; name: string; subject: string; cat: string; date: string; desc: string; links: Lnk[]; max: number; got: number; pct: number; grade: string; answer: string; ai: string; attachments: {id: string; name: string; type: string; size: number; textContent?: string;}[]; created: string; }
+interface MemItem { id: string; title: string; cat: string; content: string; tags: string[]; created: string; updated: string; }
+interface DailyTask { id: string; date: string; answerWriting: boolean; mcqSolved: number; caMcqSolved: number; notes: string; }
 interface AppUser { id: string; email: string; name: string; mode: "supabase" | "local" }
-type Tab = "topics" | "exams" | "memory" | "stats" | "daily";
+type Tab = "topics" | "exams" | "memory" | "stats" | "daily" | "notifications";
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                       HELPERS                                ║
-// ╚══════════════════════════════════════════════════════════════╝
 const IV = [1, 3, 7, 14, 30, 60, 120];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const iso = () => new Date().toISOString().split("T")[0];
@@ -55,65 +29,28 @@ const calcGr = (p: number) => p >= 90 ? "A+" : p >= 80 ? "A" : p >= 70 ? "B+" : 
 const CATS_T = ["GS", "Optional", "Prelims", "Mains", "Essay"];
 const CATS_M = ["GS1", "GS2", "GS3", "GS4", "Ethics", "Optional", "Essay", "Current Affairs"];
 
-async function hashPw(pw: string, salt: string) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw + salt));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
+async function hashPw(pw: string, salt: string) { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw + salt)); return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join(""); }
 function genSalt() { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a).map(b => b.toString(16).padStart(2, "0")).join(""); }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║              SYNCED STORE WITH REALTIME                      ║
-// ══════════════════════════════════════════════════════════════╝
 function useSyncRealtime<T>(key: string, init: T, userId: string | null): [T, (fn: T | ((p: T) => T)) => void, boolean] {
   const lsKey = userId ? `sr_${userId}_${key}` : `sr_${key}`;
   const [val, setVal] = useState<T>(() => { try { const s = localStorage.getItem(lsKey); return s ? JSON.parse(s) : init; } catch { return init; } });
   const [loading, setLoading] = useState(true);
   const channelRef = useRef<any>(null);
-
   useEffect(() => {
     if (!HAS_SB || !userId) { setLoading(false); return; }
-    const loadData = async () => {
-      try {
-        const c = getSB()!;
-        const { data, error } = await c.from("user_store").select("value").eq("user_id", userId).eq("key", key).single();
-        if (!error && data?.value) { setVal(data.value); localStorage.setItem(lsKey, JSON.stringify(data.value)); }
-      } catch (err) { console.log(`No ${key} data in Supabase yet`); }
-      finally { setLoading(false); }
-    };
+    const loadData = async () => { try { const c = getSB()!; const { data, error } = await c.from("user_store").select("value").eq("user_id", userId).eq("key", key).single(); if (!error && data?.value) { setVal(data.value); localStorage.setItem(lsKey, JSON.stringify(data.value)); } } catch (err) { console.log(`No ${key} data in Supabase yet`); } finally { setLoading(false); } };
     loadData();
     const c = getSB()!;
-    channelRef.current = c.channel(`user_store:${userId}:${key}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_store', filter: `user_id=eq.${userId} AND key=eq.${key}` }, (payload: any) => {
-        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          const newVal = payload.new.value; setVal(newVal); localStorage.setItem(lsKey, JSON.stringify(newVal));
-        }
-      }).subscribe();
+    channelRef.current = c.channel(`user_store:${userId}:${key}`).on('postgres_changes', { event: '*', schema: 'public', table: 'user_store', filter: `user_id=eq.${userId} AND key=eq.${key}` }, (payload: any) => { if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') { const newVal = payload.new.value; setVal(newVal); localStorage.setItem(lsKey, JSON.stringify(newVal)); } }).subscribe();
     return () => { if (channelRef.current) c.removeChannel(channelRef.current); };
   }, [userId, key, lsKey]);
-
-  useEffect(() => {
-    try { localStorage.setItem(lsKey, JSON.stringify(val)); } catch {}
-    if (HAS_SB && userId && !loading) {
-      const c = getSB()!;
-      c.from("user_store").upsert({ user_id: userId, key, value: val, updated_at: new Date().toISOString() }, { onConflict: "user_id,key" }).then(() => {});
-    }
-  }, [val, lsKey, key, userId, loading]);
-
-  const setValWrapper = useCallback((fn: T | ((p: T) => T)) => {
-    setVal(prev => typeof fn === 'function' ? (fn as (p: T) => T)(prev) : fn);
-  }, []);
-
+  useEffect(() => { try { localStorage.setItem(lsKey, JSON.stringify(val)); } catch {} if (HAS_SB && userId && !loading) { const c = getSB()!; c.from("user_store").upsert({ user_id: userId, key, value: val, updated_at: new Date().toISOString() }, { onConflict: "user_id,key" }).then(() => {}); } }, [val, lsKey, key, userId, loading]);
+  const setValWrapper = useCallback((fn: T | ((p: T) => T)) => { setVal(prev => typeof fn === 'function' ? (fn as (p: T) => T)(prev) : fn); }, []);
   return [val, setValWrapper, loading];
 }
+async function loadAllFromSB(userId: string): Promise<Record<string, any>> { const c = getSB(); if (!c) return {}; try { const { data } = await c.from("user_store").select("key, value").eq("user_id", userId); if (!data) return {}; const out: Record<string, any> = {}; data.forEach((r: any) => { out[r.key] = r.value; }); return out; } catch { return {}; } }
 
-async function loadAllFromSB(userId: string): Promise<Record<string, any>> {
-  const c = getSB(); if (!c) return {};
-  try { const { data } = await c.from("user_store").select("key, value").eq("user_id", userId); if (!data) return {}; const out: Record<string, any> = {}; data.forEach((r: any) => { out[r.key] = r.value; }); return out; } catch { return {}; }
-}
-
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                      SVG ICONS                               ║
-// ╚══════════════════════════════════════════════════════════════╝
 const Ic = ({ d, sz = 18, cls = "" }: { d: string; sz?: number; cls?: string }) => (<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={cls}><path d={d} /></svg>);
 const IPlus = (p: any) => <Ic {...p} d="M12 5v14M5 12h14" />;
 const ISearch = (p: any) => <Ic {...p} d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />;
@@ -136,14 +73,9 @@ const IUser = (p: any) => <Ic {...p} d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M
 const IEdit2 = (p: any) => <Ic {...p} d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5Z" />;
 const ICloud = (p: any) => <Ic {...p} d="M17.5 19c0-1.7-1.3-3-3-3h-1.1c-.1-2.9-2.5-5.2-5.4-5.2C5.2 10.8 3 13 3 15.8c0 .4 0 .8.1 1.2C1.3 17.5 0 19.2 0 21.2 0 23.7 2 25.8 4.5 25.8h13c2.8 0 5-2.2 5-5s-2.2-5-5-5z" />;
 const IChart = (p: any) => <Ic {...p} d="M18 20V10M12 20V4M6 20v-6" />;
-const IFile = (p: any) => <Ic {...p} d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z" />;
-const IImage = (p: any) => <Ic {...p} d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4m18 0l-6-6-6 6M12 12v9m0-9a4 4 0 100-8 4 4 0 000 8z" />;
 const ICalendar = (p: any) => <Ic {...p} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />;
 const ITarget = (p: any) => <Ic {...p} d="M22 12h-4l-3 9L9 3l-3 9H2" />;
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                   AUTH PAGE                                  ║
-// ╚══════════════════════════════════════════════════════════════╝
 function AuthPage({ onLogin }: { onLogin: (u: AppUser) => void }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -153,7 +85,6 @@ function AuthPage({ onLogin }: { onLogin: (u: AppUser) => void }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr(""); setOk(""); setLoading(true);
     try {
@@ -192,65 +123,28 @@ function AuthPage({ onLogin }: { onLogin: (u: AppUser) => void }) {
     } catch (ex: any) { setErr(ex?.message || "Error"); }
     finally { setLoading(false); }
   };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="relative w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-block relative mb-4">
-            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-3xl shadow-2xl">
-              <span className="text-4xl">🧠</span>
-            </div>
-            <span className="absolute -top-2 -right-2 text-2xl">✨</span>
+            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-3xl shadow-2xl"><span className="text-4xl">🧠</span></div>
+            <span className="absolute -top-2 -right-2 text-2xl animate-pulse">✨</span>
           </div>
           <h1 className="text-4xl font-black text-gray-900">Space<span className="text-indigo-600">Rev</span></h1>
           <p className="text-gray-500 mt-2 text-sm">Spaced Revision & Exam Tracker</p>
-          <div className="mt-3">
-            {HAS_SB ? (
-              <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
-                <ICloud sz={14} /> Cloud Sync · Multi-device
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gray-100 text-gray-600 text-xs font-bold">💾 Local Mode</span>
-            )}
-          </div>
+          <div className="mt-3">{HAS_SB ? (<span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold"><ICloud sz={14} /> Cloud Sync · Multi-device</span>) : (<span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gray-100 text-gray-600 text-xs font-bold">💾 Local Mode</span>)}</div>
         </div>
-
         <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl border border-gray-100 overflow-hidden">
-          <div className="flex border-b">
-            {(["login", "signup"] as const).map(m => (
-              <button key={m} onClick={() => { setMode(m); setErr(""); setOk(""); }}
-                className={`flex-1 py-4 text-sm font-bold ${mode === m ? "text-indigo-600" : "text-gray-400"}`}>
-                {m === "login" ? "Sign In" : "Create Account"}
-              </button>
-            ))}
-          </div>
-
+          <div className="flex border-b">{(["login", "signup"] as const).map(m => (<button key={m} onClick={() => { setMode(m); setErr(""); setOk(""); }} className={`flex-1 py-4 text-sm font-bold ${mode === m ? "text-indigo-600" : "text-gray-400"}`}>{m === "login" ? "Sign In" : "Create Account"}</button>))}</div>
           <form onSubmit={submit} className="p-6 sm:p-8 space-y-5">
-            {mode === "signup" && (
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Full Name</label>
-                <input value={name} onChange={e => setName(e.target.value)} placeholder="Your name" className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100" />
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">{HAS_SB ? "Email" : "Username"}</label>
-              <input type={HAS_SB ? "email" : "text"} value={email} onChange={e => setEmail(e.target.value)} required placeholder={HAS_SB ? "you@email.com" : "Username"} className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100" />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
-              <input type={showPw ? "text" : "password"} value={pw} onChange={e => setPw(e.target.value)} required minLength={6} placeholder="Min 6 characters" className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100" />
-              <button type="button" onClick={() => setShowPw(!showPw)} className="text-xs text-gray-400 mt-1">{showPw ? "Hide" : "Show"}</button>
-            </div>
+            {mode === "signup" && (<div><label className="block text-sm font-semibold text-gray-700 mb-1.5">Full Name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="Your name" className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100" /></div>)}
+            <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">{HAS_SB ? "Email" : "Username"}</label><input type={HAS_SB ? "email" : "text"} value={email} onChange={e => setEmail(e.target.value)} required placeholder={HAS_SB ? "you@email.com" : "Username"} className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100" /></div>
+            <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label><input type={showPw ? "text" : "password"} value={pw} onChange={e => setPw(e.target.value)} required minLength={6} placeholder="Min 6 characters" className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-indigo-100" /><button type="button" onClick={() => setShowPw(!showPw)} className="text-xs text-gray-400 mt-1">{showPw ? "Hide" : "Show"}</button></div>
             {err && <div className="p-3 rounded-xl bg-red-50 text-sm text-red-700">⚠️ {err}</div>}
             {ok && <div className="p-3 rounded-xl bg-emerald-50 text-sm text-emerald-700">✅ {ok}</div>}
-            <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-600 disabled:opacity-60">
-              {loading ? "⏳ Please wait..." : mode === "login" ? "Sign In →" : "Create Account →"}
-            </button>
-            <p className="text-center text-sm text-gray-500">
-              {mode === "login" ? "Don't have an account? " : "Already have an account? "}
-              <button type="button" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(""); setOk(""); }} className="text-indigo-600 font-semibold">{mode === "login" ? "Sign Up" : "Sign In"}</button>
-            </p>
+            <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-600 disabled:opacity-60">{loading ? "⏳ Please wait..." : mode === "login" ? "Sign In →" : "Create Account →"}</button>
+            <p className="text-center text-sm text-gray-500">{mode === "login" ? "Don't have an account? " : "Already have an account? "}<button type="button" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(""); setOk(""); }} className="text-indigo-600 font-semibold">{mode === "login" ? "Sign Up" : "Sign In"}</button></p>
           </form>
         </div>
       </div>
@@ -258,48 +152,26 @@ function AuthPage({ onLogin }: { onLogin: (u: AppUser) => void }) {
   );
 }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                       MAIN APP                               ║
-// ╚══════════════════════════════════════════════════════════════╝
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [checking, setChecking] = useState(true);
-
   useEffect(() => {
     let done = false;
     const timer = setTimeout(() => { if (!done) { done = true; setChecking(false); } }, 3000);
     (async () => {
-      if (HAS_SB) {
-        try {
-          const c = getSB()!;
-          const { data } = await c.auth.getSession();
-          if (data.session?.user) {
-            const u = data.session.user;
-            if (!done) { done = true; setUser({ id: u.id, email: u.email || "", name: u.user_metadata?.name || u.email?.split("@")[0] || "User", mode: "supabase" }); setChecking(false); return; }
-          }
-        } catch {}
-      }
-      try {
-        const s = localStorage.getItem("sr_session");
-        if (s) { const u = JSON.parse(s); if (!done) { done = true; setUser(u); setChecking(false); return; } }
-      } catch {}
+      if (HAS_SB) { try { const c = getSB()!; const { data } = await c.auth.getSession(); if (data.session?.user) { const u = data.session.user; if (!done) { done = true; setUser({ id: u.id, email: u.email || "", name: u.user_metadata?.name || u.email?.split("@")[0] || "User", mode: "supabase" }); setChecking(false); return; } } } catch {} }
+      try { const s = localStorage.getItem("sr_session"); if (s) { const u = JSON.parse(s); if (!done) { done = true; setUser(u); setChecking(false); return; } } } catch {}
       if (!done) { done = true; setChecking(false); }
     })();
     return () => clearTimeout(timer);
   }, []);
-
   const login = (u: AppUser) => { setUser(u); localStorage.setItem("sr_session", JSON.stringify(u)); };
   const logout = async () => { if (HAS_SB) try { getSB()?.auth.signOut(); } catch {}; localStorage.removeItem("sr_session"); setUser(null); };
-
   if (checking) return (<div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center"><div className="text-center"><div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-3xl shadow-xl inline-block mb-4 animate-pulse"><span className="text-3xl">🧠</span></div><p className="text-gray-500 text-sm">Loading...</p></div></div>);
   if (!user) return <AuthPage onLogin={login} />;
-
   return <Dashboard user={user} onLogout={logout} />;
 }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                     DASHBOARD                                ║
-// ══════════════════════════════════════════════════════════════╝
 function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) {
   const userId = user.id;
   const [topics, setTopics, topicsLoading] = useSyncRealtime<Topic[]>("topics", [], userId);
@@ -310,38 +182,12 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
   const [subs, setSubs] = useSyncRealtime<string[]>("subs", [], userId);
   const [memCats, setMemCats] = useSyncRealtime<string[]>("memcats", CATS_M, userId);
   const [examSubs, setExamSubs] = useSyncRealtime<string[]>("examsubs", [], userId);
-
-  // Auto-postpone overdue
-  useEffect(() => {
-    const today = iso();
-    let changed = false;
-    const updated = topics.map(t => {
-      if (!t.sched && t.studied !== null && daysDiff(t.next) < 0) {
-        changed = true;
-        return { ...t, next: addD(today, 1) };
-      }
-      return t;
-    });
-    if (changed) setTopics(updated);
-  }, []);
-
-  useEffect(() => {
-    if (user.mode !== "supabase") return;
-    loadAllFromSB(userId).then(d => {
-      if (d.topics?.length) setTopics(d.topics);
-      if (d.exams?.length) setExams(d.exams);
-      if (d.memory?.length) setMemory(d.memory);
-      if (d.daily?.length) setDaily(d.daily);
-      if (d.cats?.length) setCats(d.cats);
-      if (d.subs?.length) setSubs(d.subs);
-      if (d.memcats?.length) setMemCats(d.memcats);
-      if (d.examsubs?.length) setExamSubs(d.examsubs);
-    });
-  }, [userId]);
-
+  useEffect(() => { const today = iso(); let changed = false; const updated = topics.map(t => { if (!t.sched && t.studied !== null && daysDiff(t.next) < 0) { changed = true; return { ...t, next: addD(today, 1) }; } return t; }); if (changed) setTopics(updated); }, []);
+  useEffect(() => { if (user.mode !== "supabase") return; loadAllFromSB(userId).then(d => { if (d.topics?.length) setTopics(d.topics); if (d.exams?.length) setExams(d.exams); if (d.memory?.length) setMemory(d.memory); if (d.daily?.length) setDaily(d.daily); if (d.cats?.length) setCats(d.cats); if (d.subs?.length) setSubs(d.subs); if (d.memcats?.length) setMemCats(d.memcats); if (d.examsubs?.length) setExamSubs(d.examsubs); }); }, [userId]);
   const [tab, setTab] = useState<Tab>("topics");
   const [view, setView] = useState<"list" | "cal">("list");
   const [q, setQ] = useState(""); const [cf, setCf] = useState("all");
+  const [showNotifications, setShowNotifications] = useState(false);
   const [modal, setModal] = useState<null | "topic" | "exam" | "memory">(null);
   const [editT, setEditT] = useState<Topic | null>(null);
   const [editE, setEditE] = useState<Exam | null>(null);
@@ -349,288 +195,260 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
   const [expId, setExpId] = useState<string | null>(null);
   const [aiId, setAiId] = useState<string | null>(null);
   const [revEdit, setRevEdit] = useState<{ tid: string; revIdx: number; date: string } | null>(null);
-
   const fTopics = useMemo(() => { let r = [...topics]; if (q) { const s = q.toLowerCase(); r = r.filter(t => t.title.toLowerCase().includes(s) || t.subject.toLowerCase().includes(s) || t.cat.toLowerCase().includes(s)); } if (cf !== "all") r = r.filter(t => t.cat === cf); r.sort((a, b) => daysDiff(a.next) - daysDiff(b.next)); return r; }, [topics, q, cf]);
   const fExams = useMemo(() => { let r = [...exams]; if (q) { const s = q.toLowerCase(); r = r.filter(e => e.name.toLowerCase().includes(s) || e.subject.toLowerCase().includes(s) || e.cat.toLowerCase().includes(s)); } if (cf !== "all") r = r.filter(e => e.cat === cf); r.sort((a, b) => b.date.localeCompare(a.date)); return r; }, [exams, q, cf]);
   const fMemory = useMemo(() => { let r = [...memory]; if (q) { const s = q.toLowerCase(); r = r.filter(m => m.title.toLowerCase().includes(s) || m.tags.some(t => t.toLowerCase().includes(s)) || m.cat.toLowerCase().includes(s)); } if (cf !== "all") r = r.filter(m => m.cat === cf); r.sort((a, b) => b.updated.localeCompare(a.updated)); return r; }, [memory, q, cf]);
-
   const over = topics.filter(t => getSt(t) === "over").length;
   const due = topics.filter(t => getSt(t) === "due").length;
   const sched = topics.filter(t => getSt(t) === "sched").length;
-
   const saveTopic = useCallback((t: Topic) => { setTopics(p => { const i = p.findIndex(x => x.id === t.id); return i >= 0 ? p.map(x => x.id === t.id ? t : x) : [t, ...p]; }); setModal(null); setEditT(null); }, []);
   const delTopic = useCallback((id: string) => { if (confirm("Delete?")) setTopics(p => p.filter(t => t.id !== id)); }, []);
-  const markStudied = useCallback((id: string, yes: boolean) => {
-    setTopics(p => p.map(t => {
-      if (t.id !== id) return t;
-      if (yes) return { ...t, studied: true, sched: false, lvl: 0, next: nxt(iso(), 0), revs: [...t.revs, { date: iso(), ok: true, lvl: 0 }] };
-      return { ...t, studied: false, next: addD(t.next, 1), revs: [...t.revs, { date: iso(), ok: false, lvl: t.lvl }] };
-    }));
-  }, []);
+  const markStudied = useCallback((id: string, yes: boolean) => { setTopics(p => p.map(t => { if (t.id !== id) return t; if (yes) return { ...t, studied: true, sched: false, lvl: 0, next: nxt(iso(), 0), revs: [...t.revs, { date: iso(), ok: true, lvl: 0 }] }; return { ...t, studied: false, next: addD(t.next, 1), revs: [...t.revs, { date: iso(), ok: false, lvl: t.lvl }] }; })); }, []);
   const markRevised = useCallback((id: string) => { setTopics(p => p.map(t => { if (t.id !== id) return t; const nl = t.lvl + 1; return { ...t, lvl: nl, next: nxt(iso(), nl), revs: [...t.revs, { date: iso(), ok: true, lvl: nl }] }; })); }, []);
   const undoRev = useCallback((id: string) => { setTopics(p => p.map(t => { if (t.id !== id || !t.revs.length) return t; const rv = t.revs.slice(0, -1); const nl = Math.max(0, t.lvl - 1); const nr = rv.length ? nxt(rv[rv.length - 1].date, rv.length - 1) : t.date; return { ...t, lvl: nl, next: nr, revs: rv }; })); }, []);
   const updateRevDate = useCallback((tid: string, revIdx: number, newDate: string) => { setTopics(p => p.map(t => { if (t.id !== tid) return t; const newRevs = t.revs.map((r, i) => i === revIdx ? { ...r, date: newDate } : r); return { ...t, revs: newRevs, next: nxt(newDate, t.lvl) }; })); setRevEdit(null); }, []);
   const deleteRev = useCallback((tid: string, revIdx: number) => { setTopics(p => p.map(t => { if (t.id !== tid || !t.revs[revIdx]) return t; const newRevs = t.revs.filter((_, i) => i !== revIdx); const nl = newRevs.length; const nr = newRevs.length ? nxt(newRevs[newRevs.length - 1].date, nl - 1) : t.date; return { ...t, lvl: nl, revs: newRevs, next: nr }; })); }, []);
-
   const saveExam = useCallback((e: Exam) => { setExams(p => { const i = p.findIndex(x => x.id === e.id); return i >= 0 ? p.map(x => x.id === e.id ? e : x) : [e, ...p]; }); setModal(null); setEditE(null); }, []);
   const delExam = useCallback((id: string) => { if (confirm("Delete?")) setExams(p => p.filter(e => e.id !== id)); }, []);
-  
-  const runAI = useCallback(async (eid: string) => {
-    const ex = exams.find(e => e.id === eid);
-    if (!ex?.answer) return;
-    setAiId(eid);
-    try {
-      const prompt = `Evaluate this answer for "${ex.name}" (${ex.subject}).\n1.Rating/10 2.Strengths 3.Weaknesses 4.Missing 5.Tips\n\n${ex.answer}`;
-      const r = await (window as any).puter.ai.chat(prompt, { model: "perplexity/sonar" });
-      const txt = typeof r === "string" ? r : r?.message?.content || "Error";
-      setExams(p => p.map(e => e.id === eid ? { ...e, ai: txt } : e));
-    } catch { setExams(p => p.map(e => e.id === eid ? { ...e, ai: "AI error" } : e)); }
-    finally { setAiId(null); }
-  }, [exams]);
-
+  const runAI = useCallback(async (eid: string) => { const ex = exams.find(e => e.id === eid); if (!ex?.answer) return; setAiId(eid); try { const prompt = `Evaluate this answer for "${ex.name}" (${ex.subject}).\n1.Rating/10 2.Strengths 3.Weaknesses 4.Missing 5.Tips\n\n${ex.answer}`; const r = await (window as any).puter.ai.chat(prompt, { model: "perplexity/sonar" }); const txt = typeof r === "string" ? r : r?.message?.content || "Error"; setExams(p => p.map(e => e.id === eid ? { ...e, ai: txt } : e)); } catch { setExams(p => p.map(e => e.id === eid ? { ...e, ai: "AI error" } : e)); } finally { setAiId(null); } }, [exams]);
   const saveMem = useCallback((m: MemItem) => { setMemory(p => { const i = p.findIndex(x => x.id === m.id); return i >= 0 ? p.map(x => x.id === m.id ? m : x) : [m, ...p]; }); setModal(null); setEditM(null); }, []);
   const delMem = useCallback((id: string) => { if (confirm("Delete?")) setMemory(p => p.filter(m => m.id !== id)); }, []);
-  
-  // Daily tracker
   const todayTask = useMemo(() => daily.find(d => d.date === iso()), [daily]);
-  const saveDaily = useCallback((task: DailyTask) => {
-    setDaily(p => { const i = p.findIndex(x => x.date === task.date); return i >= 0 ? p.map(x => x.date === task.date ? task : x) : [task, ...p]; });
-  }, []);
+  const saveDaily = useCallback((task: DailyTask) => { setDaily(p => { const i = p.findIndex(x => x.date === task.date); return i >= 0 ? p.map(x => x.date === task.date ? task : x) : [task, ...p]; }); }, []);
   const getDaily = useCallback((date: string) => daily.find(d => d.date === date), [daily]);
-
   const addCat = (c: string) => { if (c && !cats.includes(c)) setCats(p => [...p, c]); };
   const addSub = (s: string) => { if (s && !subs.includes(s)) setSubs(p => [...p, s]); };
   const addExamSub = (s: string) => { if (s && !examSubs.includes(s)) setExamSubs(p => [...p, s]); };
   const addMemCat = (c: string) => { if (c && !memCats.includes(c)) setMemCats(p => [...p, c]); };
-
   const curCats = tab === "memory" ? memCats : cats;
   const curItems = tab === "topics" ? topics : tab === "exams" ? exams : memory;
-
   const Modal = ({ children, onClose }: { children: React.ReactNode; onClose: () => void }) => (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}><div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>{children}</div></div>);
+  
+  // Notifications data for tab badge
+  const todayStr = iso();
+  const dueTodayList = topics.filter(t => getSt(t) === "due");
+  const overdueList = topics.filter(t => getSt(t) === "over");
+  const notifCount = dueTodayList.length + overdueList.length;
+  if (topicsLoading || examsLoading || memoryLoading || dailyLoading) { return (<div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-indigo-50/30 flex items-center justify-center"><div className="text-center"><div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-3xl shadow-xl inline-block mb-4 animate-pulse"><span className="text-3xl">🧠</span></div><p className="text-gray-500 text-sm">Syncing your data...</p></div></div>); }
 
-  if (topicsLoading || examsLoading || memoryLoading || dailyLoading) {
-    return (<div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-indigo-50/30 flex items-center justify-center"><div className="text-center"><div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-3xl shadow-xl inline-block mb-4 animate-pulse"><span className="text-3xl">🧠</span></div><p className="text-gray-500 text-sm">Syncing your data...</p></div></div>);
-  }
+  const TopicForm = () => { const [title, sT] = useState(editT?.title || ""); const [sub, sS] = useState(editT?.subject || ""); const [cat, sC] = useState(editT?.cat || ""); const [desc, sD] = useState(editT?.desc || ""); const [dt, sDt] = useState(editT?.date || iso()); const [lnk, sL] = useState<Lnk[]>(editT?.links?.length ? editT.links : [{ id: uid(), label: "", url: "" }]); const [nS, sNS] = useState(""); const [showNS, sSNS] = useState(false); const [nC, sNC] = useState(""); const [showNC, sSNC] = useState(false); const save = (e: React.FormEvent) => { e.preventDefault(); if (!title.trim()) return; const f = isFut(dt); saveTopic({ id: editT?.id || uid(), title: title.trim(), subject: sub, cat, desc, date: dt, studied: editT?.studied ?? (f ? null : true), links: lnk.filter(l => l.url.trim()), revs: editT?.revs || [], next: f ? dt : nxt(dt, editT?.lvl || 0), lvl: editT?.lvl || 0, sched: f, created: editT?.created || new Date().toISOString() }); }; return (<Modal onClose={() => { setModal(null); setEditT(null); }}><form onSubmit={save} className="p-6 space-y-4"><h2 className="text-xl font-bold">{editT ? "Edit Topic" : "Add Topic"}</h2><input value={title} onChange={e => sT(e.target.value)} required placeholder="Title" className="w-full px-4 py-3 rounded-xl border outline-none" />{!showNS ? (<div className="flex gap-2"><select value={sub} onChange={e => sS(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Select...</option>{subs.map(s => <option key={s}>{s}</option>)}</select><button type="button" onClick={() => sSNS(true)} className="px-4 rounded-xl border border-dashed border-indigo-300 text-indigo-600"><IPlus sz={16} /></button></div>) : (<div className="flex gap-2"><input value={nS} onChange={e => sNS(e.target.value)} placeholder="New subject..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addSub(nS.trim()); sS(nS.trim()); sNS(""); sSNS(false); }} className="px-4 py-3 rounded-xl bg-indigo-500 text-white">Add</button><button type="button" onClick={() => sSNS(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}{!showNC ? (<div className="flex flex-wrap gap-2">{cats.map(c => <button key={c} type="button" onClick={() => sC(cat === c ? "" : c)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border-2 ${cat === c ? "bg-indigo-100 text-indigo-700 border-indigo-300" : "bg-white text-gray-600 border-gray-200"}`}>{c}</button>)}<button type="button" onClick={() => sSNC(true)} className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 border-dashed border-indigo-300 text-indigo-600">+ Add</button></div>) : (<div className="flex gap-2"><input value={nC} onChange={e => sNC(e.target.value)} placeholder="New category..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addCat(nC.trim()); sC(nC.trim()); sNC(""); sSNC(false); }} className="px-4 py-3 rounded-xl bg-indigo-500 text-white">Add</button><button type="button" onClick={() => sSNC(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}<input type="date" value={dt} onChange={e => sDt(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" /><textarea value={desc} onChange={e => sD(e.target.value)} rows={3} placeholder="Notes..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />{lnk.map((l, i) => (<div key={l.id} className="flex gap-2"><input value={l.label} onChange={e => sL(lnk.map(x => x.id === l.id ? { ...x, label: e.target.value } : x))} placeholder="Label" className="flex-1 px-3 py-2.5 rounded-xl border text-sm outline-none" /><input value={l.url} onChange={e => sL(lnk.map(x => x.id === l.id ? { ...x, url: e.target.value } : x))} placeholder="https://..." className="flex-1 px-3 py-2.5 rounded-xl border text-sm outline-none" />{lnk.length > 1 && <button type="button" onClick={() => sL(lnk.filter(x => x.id !== l.id))} className="p-2 text-gray-300 hover:text-red-500"><IX sz={14} /></button>}</div>))}<button type="button" onClick={() => sL([...lnk, { id: uid(), label: "", url: "" }])} className="text-sm font-medium text-indigo-600">+ Add link</button><div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditT(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600">Save</button></div></form></Modal>); };
+  const ExamForm = () => { const [name, sN] = useState(editE?.name || ""); const [sub, sS] = useState(editE?.subject || ""); const [cat, sC] = useState(editE?.cat || ""); const [dt, sDt] = useState(editE?.date || iso()); const [desc, sD] = useState(editE?.desc || ""); const [mx, sMx] = useState(String(editE?.max ?? 100)); const [gt, sGt] = useState(String(editE?.got ?? "")); const [ans, sAns] = useState(editE?.answer || ""); const [lnk, sL] = useState<Lnk[]>(editE?.links?.length ? editE.links : [{ id: uid(), label: "", url: "" }]); const [attachments, setAttachments] = useState(editE?.attachments || []); const [nS, sNS] = useState(""); const [showNS, sSNS] = useState(false); const fileInputRef = useRef<HTMLInputElement>(null); const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => { const files = e.target.files; if (!files) return; Array.from(files).forEach(file => { if (file.size > 5 * 1024 * 1024) return; const reader = new FileReader(); reader.onload = (ev) => { const textContent = file.type.startsWith('text/') ? (ev.target?.result as string) : undefined; setAttachments(prev => [...prev, { id: uid(), name: file.name, type: file.type, size: file.size, textContent }]); }; if (file.type.startsWith('text/') || file.type === 'application/pdf') { reader.readAsText(file); } else { reader.readAsDataURL(file); } }); }; const removeAttachment = (id: string) => { setAttachments(prev => prev.filter(a => a.id !== id)); }; const save = (e: React.FormEvent) => { e.preventDefault(); if (!name.trim()) return; const m = +mx || 100, g = +gt || 0, p = m > 0 ? Math.round(g / m * 100) : 0; saveExam({ id: editE?.id || uid(), name: name.trim(), subject: sub, cat, date: dt, desc, links: lnk.filter(l => l.url.trim()), max: m, got: g, pct: p, grade: calcGr(p), answer: ans, ai: editE?.ai || "", attachments, created: editE?.created || new Date().toISOString() }); }; return (<Modal onClose={() => { setModal(null); setEditE(null); }}><form onSubmit={save} className="p-6 space-y-4"><h2 className="text-xl font-bold">{editE ? "Edit Exam" : "Add Exam"}</h2><input value={name} onChange={e => sN(e.target.value)} required placeholder="Exam Name" className="w-full px-4 py-3 rounded-xl border outline-none" />{!showNS ? (<div className="flex gap-2"><select value={sub} onChange={e => sS(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Select...</option>{examSubs.map(s => <option key={s}>{s}</option>)}</select><button type="button" onClick={() => sSNS(true)} className="px-4 rounded-xl border border-dashed border-amber-300 text-amber-600"><IPlus sz={16} /></button></div>) : (<div className="flex gap-2"><input value={nS} onChange={e => sNS(e.target.value)} placeholder="New subject..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addExamSub(nS.trim()); sS(nS.trim()); sNS(""); sSNS(false); }} className="px-4 py-3 rounded-xl bg-amber-500 text-white">Add</button><button type="button" onClick={() => sSNS(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}<select value={cat} onChange={e => sC(e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Category</option>{cats.map(c => <option key={c}>{c}</option>)}</select><input type="date" value={dt} onChange={e => sDt(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" /><div className="grid grid-cols-2 gap-4"><input type="number" value={mx} onChange={e => sMx(e.target.value)} placeholder="Max Marks" className="px-4 py-3 rounded-xl border outline-none" /><input type="number" value={gt} onChange={e => sGt(e.target.value)} placeholder="Obtained" className="px-4 py-3 rounded-xl border outline-none" /></div><textarea value={ans} onChange={e => sAns(e.target.value)} rows={4} placeholder="Answer for AI analysis..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" /><div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditE(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-amber-600">Save</button></div></form></Modal>); };
+  const MemoryForm = () => { const [title, sT] = useState(editM?.title || ""); const [cat, sC] = useState(editM?.cat || ""); const [content, sCont] = useState(editM?.content || ""); const [tags, sTags] = useState(editM?.tags?.join(", ") || ""); const [nC, sNC] = useState(""); const [showNC, sSNC] = useState(false); const save = (e: React.FormEvent) => { e.preventDefault(); if (!title.trim()) return; saveMem({ id: editM?.id || uid(), title: title.trim(), cat, content, tags: tags.split(",").map(t => t.trim()).filter(Boolean), created: editM?.created || new Date().toISOString(), updated: new Date().toISOString() }); }; return (<Modal onClose={() => { setModal(null); setEditM(null); }}><form onSubmit={save} className="p-6 space-y-4"><h2 className="text-xl font-bold">{editM ? "Edit Memory" : "Add Memory"}</h2><input value={title} onChange={e => sT(e.target.value)} required placeholder="Title" className="w-full px-4 py-3 rounded-xl border outline-none" />{!showNC ? (<div className="flex flex-wrap gap-2">{memCats.map(c => <button key={c} type="button" onClick={() => sC(cat === c ? "" : c)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border-2 ${cat === c ? "bg-teal-100 text-teal-700 border-teal-300" : "bg-white text-gray-600 border-gray-200"}`}>{c}</button>)}<button type="button" onClick={() => sSNC(true)} className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 border-dashed border-teal-300 text-teal-600">+ Add</button></div>) : (<div className="flex gap-2"><input value={nC} onChange={e => sNC(e.target.value)} placeholder="New category..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addMemCat(nC.trim()); sC(nC.trim()); sNC(""); sSNC(false); }} className="px-4 py-3 rounded-xl bg-teal-500 text-white">Add</button><button type="button" onClick={() => sSNC(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}<textarea value={content} onChange={e => sCont(e.target.value)} rows={6} placeholder="Content..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" /><input value={tags} onChange={e => sTags(e.target.value)} placeholder="Tags (comma separated)" className="w-full px-4 py-3 rounded-xl border outline-none" /><div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditM(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600">Save</button></div></form></Modal>); };
+  const StatsTab = () => { const catStats = useMemo(() => { const stats: Record<string, { total: number; avg: number; best: number }> = {}; cats.forEach(c => stats[c] = { total: 0, avg: 0, best: 0 }); exams.forEach(e => { if (!stats[e.cat]) stats[e.cat] = { total: 0, avg: 0, best: 0 }; stats[e.cat].total++; stats[e.cat].avg = Math.round((stats[e.cat].avg * (stats[e.cat].total - 1) + e.pct) / stats[e.cat].total); stats[e.cat].best = Math.max(stats[e.cat].best, e.pct); }); return stats; }, [exams, cats]); const overallAvg = exams.length > 0 ? Math.round(exams.reduce((sum, e) => sum + e.pct, 0) / exams.length) : 0; return (<div className="space-y-6"><div className="grid grid-cols-2 sm:grid-cols-4 gap-4">{[["Total Exams", String(exams.length), "📝", "blue"], ["Average", `${overallAvg}%`, "📊", "purple"], ["Best", `${Math.max(0, ...exams.map(e => e.pct))}%`, "🏆", "amber"], ["Categories", String(cats.length), "📁", "emerald"]].map(([l, v, e, c]) => (<div key={l} className={`bg-white rounded-2xl border p-4 shadow-sm border-l-4 border-l-${c}-400`}><div className="flex items-center gap-3"><div className={`bg-${c}-50 p-2.5 rounded-xl`}><span className="text-lg">{e}</span></div><div><p className="text-2xl font-bold text-gray-900">{v}</p><p className="text-xs text-gray-500">{l}</p></div></div></div>))}</div><div className="bg-white rounded-2xl border p-5 shadow-sm"><h3 className="text-lg font-bold text-gray-900 mb-4">📊 Performance by Category</h3><div className="space-y-4">{cats.map(c => { const s = catStats[c]; if (s.total === 0) return null; return (<div key={c} className="space-y-2"><div className="flex items-center justify-between"><span className="text-sm font-semibold text-gray-700">{c}</span><span className="text-sm text-gray-500">{s.total} exams · Best: {s.best}%</span></div><div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${s.avg >= 70 ? "bg-emerald-500" : s.avg >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${s.avg}%` }} /></div><p className="text-xs text-gray-500">Average: {s.avg}%</p></div>); })}</div></div><div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 p-5"><h3 className="text-lg font-bold text-blue-900 mb-3">📅 Google Calendar</h3><p className="text-sm text-blue-700 mb-4">Add study reminders</p><div className="space-y-3">{["Daily Study", "Weekly Revision", "Mock Test"].map((title, i) => { const start = new Date(); start.setDate(start.getDate() + i); start.setHours(9 + i, 0, 0); const end = new Date(start); end.setHours(start.getHours() + 1); const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${start.toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${end.toISOString().replace(/[-:]/g, "").split(".")[0]}Z`; return (<a key={title} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-3 bg-white rounded-xl border border-blue-200 hover:border-blue-400 transition-colors"><div className="flex items-center gap-3"><div className="bg-blue-100 p-2 rounded-lg"><ICalendar sz={16} cls="text-blue-600" /></div><span className="text-sm font-medium text-gray-700">{title}</span></div><span className="text-xs text-blue-600 font-medium">Add →</span></a>); })}</div></div></div>); };
+  const DailyTracker = () => { const [selectedDate, setSelectedDate] = useState(iso()); const task = getDaily(selectedDate) || { id: uid(), date: selectedDate, answerWriting: false, mcqSolved: 0, caMcqSolved: 0, notes: "" }; const updateTask = (updates: Partial<DailyTask>) => { saveDaily({ ...task, ...updates }); }; const weekDays = useMemo(() => { const days = []; for (let i = -3; i <= 3; i++) { const d = new Date(); d.setDate(d.getDate() + i); days.push(d.toISOString().split("T")[0]); } return days; }, []); const streak = useMemo(() => { let count = 0; for (let i = 0; i < 30; i++) { const d = new Date(); d.setDate(d.getDate() - i); const ds = d.toISOString().split("T")[0]; const t = daily.find(x => x.date === ds); if (t && (t.answerWriting || t.mcqSolved > 0 || t.caMcqSolved > 0)) count++; else break; } return count; }, [daily]); return (<div className="space-y-6"><div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl border border-orange-200 p-5"><div className="flex items-center justify-between"><div><h3 className="text-lg font-bold text-orange-900">🔥 Current Streak</h3><p className="text-sm text-orange-700">Days with at least one task completed</p></div><div className="text-4xl font-black text-orange-600">{streak} <span className="text-lg font-medium text-orange-500">days</span></div></div></div><div className="bg-white rounded-2xl border p-4 shadow-sm"><h3 className="text-lg font-bold text-gray-900 mb-3">📅 Select Date</h3><div className="flex gap-2 overflow-x-auto pb-2">{weekDays.map(d => { const dt = new Date(d + "T00:00:00"); const isToday = d === iso(); const isSelected = d === selectedDate; const t = daily.find(x => x.date === d); const completed = t && (t.answerWriting || t.mcqSolved > 0 || t.caMcqSolved > 0); return (<button key={d} onClick={() => setSelectedDate(d)} className={`flex-shrink-0 p-3 rounded-xl border-2 transition-all ${isSelected ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:border-gray-300"} ${completed ? "ring-2 ring-emerald-400" : ""}`}><p className={`text-xs font-medium ${isToday ? "text-indigo-600" : "text-gray-500"}`}>{isToday ? "Today" : dt.toLocaleDateString("en-US", { weekday: "short" })}</p><p className="text-lg font-bold text-gray-900">{dt.getDate()}</p>{completed && <p className="text-[10px] text-emerald-600 font-medium">✓ Done</p>}</button>); })}</div></div><div className="bg-white rounded-2xl border p-5 shadow-sm space-y-4"><h3 className="text-lg font-bold text-gray-900">✅ Daily Tasks - {fmt(selectedDate)}</h3><div className="flex items-center justify-between p-4 bg-indigo-50 rounded-xl border border-indigo-100"><div className="flex items-center gap-3"><div className={`p-2 rounded-lg ${task.answerWriting ? "bg-indigo-500" : "bg-white border border-indigo-300"}`}><ICheck sz={16} cls={task.answerWriting ? "text-white" : "text-indigo-400"} /></div><span className="font-medium text-gray-700">Answer Writing Practice</span></div><button onClick={() => updateTask({ answerWriting: !task.answerWriting })} className={`px-4 py-2 rounded-xl text-sm font-semibold ${task.answerWriting ? "bg-indigo-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>{task.answerWriting ? "✓ Completed" : "Mark Done"}</button></div><div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-emerald-500"><ITarget sz={16} cls="text-white" /></div><span className="font-medium text-gray-700">MCQs Solved</span></div><span className="text-2xl font-bold text-emerald-600">{task.mcqSolved}</span></div><input type="range" min="0" max="100" value={task.mcqSolved} onChange={e => updateTask({ mcqSolved: +e.target.value })} className="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer" /></div><div className="p-4 bg-amber-50 rounded-xl border border-amber-100"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-amber-500"><ITarget sz={16} cls="text-white" /></div><span className="font-medium text-gray-700">CA MCQs Solved</span></div><span className="text-2xl font-bold text-amber-600">{task.caMcqSolved}</span></div><input type="range" min="0" max="50" value={task.caMcqSolved} onChange={e => updateTask({ caMcqSolved: +e.target.value })} className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer" /></div><div><label className="block text-sm font-semibold text-gray-700 mb-1.5">📝 Notes</label><textarea value={task.notes} onChange={e => updateTask({ notes: e.target.value })} placeholder="What did you study today?" rows={3} className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none resize-none" /></div></div></div>); };
 
-  // ═══════════════ TOPIC FORM ═══════════════
-  const TopicForm = () => {
-    const [title, sT] = useState(editT?.title || "");
-    const [sub, sS] = useState(editT?.subject || "");
-    const [cat, sC] = useState(editT?.cat || "");
-    const [desc, sD] = useState(editT?.desc || "");
-    const [dt, sDt] = useState(editT?.date || iso());
-    const [lnk, sL] = useState<Lnk[]>(editT?.links?.length ? editT.links : [{ id: uid(), label: "", url: "" }]);
-    const [nS, sNS] = useState(""); const [showNS, sSNS] = useState(false);
-    const [nC, sNC] = useState(""); const [showNC, sSNC] = useState(false);
-    const save = (e: React.FormEvent) => { e.preventDefault(); if (!title.trim()) return; const f = isFut(dt); saveTopic({ id: editT?.id || uid(), title: title.trim(), subject: sub, cat, desc, date: dt, studied: editT?.studied ?? (f ? null : true), links: lnk.filter(l => l.url.trim()), revs: editT?.revs || [], next: f ? dt : nxt(dt, editT?.lvl || 0), lvl: editT?.lvl || 0, sched: f, created: editT?.created || new Date().toISOString() }); };
+  // Calendar Component
+  const CalendarView = () => {
+    const [mo, sMo] = useState(new Date().getMonth());
+    const [yr, sYr] = useState(new Date().getFullYear());
+    const days = new Date(yr, mo + 1, 0).getDate();
+    const firstDay = new Date(yr, mo, 1).getDay();
+    const today = iso();
+    const MO = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const getItems = (day: number) => {
+      const ds = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (tab === "topics") {
+        return topics.filter(t => t.date === ds || t.next === ds).map(t => ({
+          k: t.id, t: t.title, c: t.next === ds ? (getSt(t) === "due" ? "bg-amber-100 text-amber-700" : getSt(t) === "over" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700") : "bg-blue-100 text-blue-700",
+          icon: t.next === ds ? "⏰" : "📚"
+        }));
+      }
+      if (tab === "exams") {
+        return exams.filter(e => e.date === ds).map(e => ({
+          k: e.id, t: e.name, c: e.pct >= 70 ? "bg-emerald-100 text-emerald-700" : e.pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700",
+          icon: "📝"
+        }));
+      }
+      return [];
+    };
+    const prevMonth = () => { if (mo === 0) { sMo(11); sYr(yr - 1); } else sMo(mo - 1); };
+    const nextMonth = () => { if (mo === 11) { sMo(0); sYr(yr + 1); } else sMo(mo + 1); };
     return (
-      <Modal onClose={() => { setModal(null); setEditT(null); }}>
-        <form onSubmit={save} className="p-6 space-y-4">
-          <h2 className="text-xl font-bold">{editT ? "Edit Topic" : "Add Topic"}</h2>
-          <input value={title} onChange={e => sT(e.target.value)} required placeholder="Title" className="w-full px-4 py-3 rounded-xl border outline-none" />
-          {!showNS ? (<div className="flex gap-2"><select value={sub} onChange={e => sS(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Select...</option>{subs.map(s => <option key={s}>{s}</option>)}</select><button type="button" onClick={() => sSNS(true)} className="px-4 rounded-xl border border-dashed border-indigo-300 text-indigo-600"><IPlus sz={16} /></button></div>) : (<div className="flex gap-2"><input value={nS} onChange={e => sNS(e.target.value)} placeholder="New subject..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addSub(nS.trim()); sS(nS.trim()); sNS(""); sSNS(false); }} className="px-4 py-3 rounded-xl bg-indigo-500 text-white">Add</button><button type="button" onClick={() => sSNS(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
-          {!showNC ? (<div className="flex flex-wrap gap-2">{cats.map(c => <button key={c} type="button" onClick={() => sC(cat === c ? "" : c)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border-2 ${cat === c ? "bg-indigo-100 text-indigo-700 border-indigo-300" : "bg-white text-gray-600 border-gray-200"}`}>{c}</button>)}<button type="button" onClick={() => sSNC(true)} className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 border-dashed border-indigo-300 text-indigo-600">+ Add</button></div>) : (<div className="flex gap-2"><input value={nC} onChange={e => sNC(e.target.value)} placeholder="New category..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addCat(nC.trim()); sC(nC.trim()); sNC(""); sSNC(false); }} className="px-4 py-3 rounded-xl bg-indigo-500 text-white">Add</button><button type="button" onClick={() => sSNC(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
-          <input type="date" value={dt} onChange={e => sDt(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" />
-          <textarea value={desc} onChange={e => sD(e.target.value)} rows={3} placeholder="Notes..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />
-          {lnk.map((l, i) => (<div key={l.id} className="flex gap-2"><input value={l.label} onChange={e => sL(lnk.map(x => x.id === l.id ? { ...x, label: e.target.value } : x))} placeholder="Label" className="flex-1 px-3 py-2.5 rounded-xl border text-sm outline-none" /><input value={l.url} onChange={e => sL(lnk.map(x => x.id === l.id ? { ...x, url: e.target.value } : x))} placeholder="https://..." className="flex-1 px-3 py-2.5 rounded-xl border text-sm outline-none" />{lnk.length > 1 && <button type="button" onClick={() => sL(lnk.filter(x => x.id !== l.id))} className="p-2 text-gray-300 hover:text-red-500"><IX sz={14} /></button>}</div>))}
-          <button type="button" onClick={() => sL([...lnk, { id: uid(), label: "", url: "" }])} className="text-sm font-medium text-indigo-600">+ Add link</button>
-          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditT(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600">Save</button></div>
-        </form>
-      </Modal>
-    );
-  };
-
-  // ═══════════════ EXAM FORM ═══════════════
-  const ExamForm = () => {
-    const [name, sN] = useState(editE?.name || "");
-    const [sub, sS] = useState(editE?.subject || "");
-    const [cat, sC] = useState(editE?.cat || "");
-    const [dt, sDt] = useState(editE?.date || iso());
-    const [desc, sD] = useState(editE?.desc || "");
-    const [mx, sMx] = useState(String(editE?.max ?? 100));
-    const [gt, sGt] = useState(String(editE?.got ?? ""));
-    const [ans, sAns] = useState(editE?.answer || "");
-    const [lnk, sL] = useState<Lnk[]>(editE?.links?.length ? editE.links : [{ id: uid(), label: "", url: "" }]);
-    const [nS, sNS] = useState(""); const [showNS, sSNS] = useState(false);
-    const save = (e: React.FormEvent) => { e.preventDefault(); if (!name.trim()) return; const m = +mx || 100, g = +gt || 0, p = m > 0 ? Math.round(g / m * 100) : 0; saveExam({ id: editE?.id || uid(), name: name.trim(), subject: sub, cat, date: dt, desc, links: lnk.filter(l => l.url.trim()), max: m, got: g, pct: p, grade: calcGr(p), answer: ans, ai: editE?.ai || "", attachments: [], created: editE?.created || new Date().toISOString() }); };
-    return (
-      <Modal onClose={() => { setModal(null); setEditE(null); }}>
-        <form onSubmit={save} className="p-6 space-y-4">
-          <h2 className="text-xl font-bold">{editE ? "Edit Exam" : "Add Exam"}</h2>
-          <input value={name} onChange={e => sN(e.target.value)} required placeholder="Exam Name" className="w-full px-4 py-3 rounded-xl border outline-none" />
-          {!showNS ? (<div className="flex gap-2"><select value={sub} onChange={e => sS(e.target.value)} className="flex-1 px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Select...</option>{examSubs.map(s => <option key={s}>{s}</option>)}</select><button type="button" onClick={() => sSNS(true)} className="px-4 rounded-xl border border-dashed border-amber-300 text-amber-600"><IPlus sz={16} /></button></div>) : (<div className="flex gap-2"><input value={nS} onChange={e => sNS(e.target.value)} placeholder="New subject..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addExamSub(nS.trim()); sS(nS.trim()); sNS(""); sSNS(false); }} className="px-4 py-3 rounded-xl bg-amber-500 text-white">Add</button><button type="button" onClick={() => sSNS(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
-          <select value={cat} onChange={e => sC(e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white outline-none"><option value="">Category</option>{cats.map(c => <option key={c}>{c}</option>)}</select>
-          <input type="date" value={dt} onChange={e => sDt(e.target.value)} className="w-full px-4 py-3 rounded-xl border outline-none" />
-          <div className="grid grid-cols-2 gap-4"><input type="number" value={mx} onChange={e => sMx(e.target.value)} placeholder="Max Marks" className="px-4 py-3 rounded-xl border outline-none" /><input type="number" value={gt} onChange={e => sGt(e.target.value)} placeholder="Obtained" className="px-4 py-3 rounded-xl border outline-none" /></div>
-          <textarea value={ans} onChange={e => sAns(e.target.value)} rows={4} placeholder="Answer for AI analysis..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />
-          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditE(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-amber-600">Save</button></div>
-        </form>
-      </Modal>
-    );
-  };
-
-  // ═══════════════ MEMORY FORM ═══════════════
-  const MemoryForm = () => {
-    const [title, sT] = useState(editM?.title || "");
-    const [cat, sC] = useState(editM?.cat || "");
-    const [content, sCont] = useState(editM?.content || "");
-    const [tags, sTags] = useState(editM?.tags?.join(", ") || "");
-    const [nC, sNC] = useState(""); const [showNC, sSNC] = useState(false);
-    const save = (e: React.FormEvent) => { e.preventDefault(); if (!title.trim()) return; saveMem({ id: editM?.id || uid(), title: title.trim(), cat, content, tags: tags.split(",").map(t => t.trim()).filter(Boolean), created: editM?.created || new Date().toISOString(), updated: new Date().toISOString() }); };
-    return (
-      <Modal onClose={() => { setModal(null); setEditM(null); }}>
-        <form onSubmit={save} className="p-6 space-y-4">
-          <h2 className="text-xl font-bold">{editM ? "Edit Memory" : "Add Memory"}</h2>
-          <input value={title} onChange={e => sT(e.target.value)} required placeholder="Title" className="w-full px-4 py-3 rounded-xl border outline-none" />
-          {!showNC ? (<div className="flex flex-wrap gap-2">{memCats.map(c => <button key={c} type="button" onClick={() => sC(cat === c ? "" : c)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border-2 ${cat === c ? "bg-teal-100 text-teal-700 border-teal-300" : "bg-white text-gray-600 border-gray-200"}`}>{c}</button>)}<button type="button" onClick={() => sSNC(true)} className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 border-dashed border-teal-300 text-teal-600">+ Add</button></div>) : (<div className="flex gap-2"><input value={nC} onChange={e => sNC(e.target.value)} placeholder="New category..." className="flex-1 px-4 py-3 rounded-xl border outline-none" /><button type="button" onClick={() => { addMemCat(nC.trim()); sC(nC.trim()); sNC(""); sSNC(false); }} className="px-4 py-3 rounded-xl bg-teal-500 text-white">Add</button><button type="button" onClick={() => sSNC(false)} className="p-3 text-gray-400"><IX sz={14} /></button></div>)}
-          <textarea value={content} onChange={e => sCont(e.target.value)} rows={6} placeholder="Content..." className="w-full px-4 py-3 rounded-xl border outline-none resize-none" />
-          <input value={tags} onChange={e => sTags(e.target.value)} placeholder="Tags (comma separated)" className="w-full px-4 py-3 rounded-xl border outline-none" />
-          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => { setModal(null); setEditM(null); }} className="px-5 py-2.5 rounded-xl text-sm text-gray-600">Cancel</button><button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600">Save</button></div>
-        </form>
-      </Modal>
-    );
-  };
-
-  // ═══════════════ STATS TAB ═══════════════
-  const StatsTab = () => {
-    const catStats = useMemo(() => {
-      const stats: Record<string, { total: number; avg: number; best: number }> = {};
-      cats.forEach(c => stats[c] = { total: 0, avg: 0, best: 0 });
-      exams.forEach(e => {
-        if (!stats[e.cat]) stats[e.cat] = { total: 0, avg: 0, best: 0 };
-        stats[e.cat].total++;
-        stats[e.cat].avg = Math.round((stats[e.cat].avg * (stats[e.cat].total - 1) + e.pct) / stats[e.cat].total);
-        stats[e.cat].best = Math.max(stats[e.cat].best, e.pct);
-      });
-      return stats;
-    }, [exams, cats]);
-    const overallAvg = exams.length > 0 ? Math.round(exams.reduce((sum, e) => sum + e.pct, 0) / exams.length) : 0;
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[["Total Exams", String(exams.length), "📝", "blue"], ["Average", `${overallAvg}%`, "📊", "purple"], ["Best", `${Math.max(0, ...exams.map(e => e.pct))}%`, "🏆", "amber"], ["Categories", String(cats.length), "📁", "emerald"]].map(([l, v, e, c]) => (
-            <div key={l} className={`bg-white rounded-2xl border p-4 shadow-sm border-l-4 border-l-${c}-400`}>
-              <div className="flex items-center gap-3"><div className={`bg-${c}-50 p-2.5 rounded-xl`}><span className="text-lg">{e}</span></div><div><p className="text-2xl font-bold text-gray-900">{v}</p><p className="text-xs text-gray-500">{l}</p></div></div>
-            </div>
-          ))}
+      <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-purple-50">
+          <button onClick={prevMonth} className="p-2.5 rounded-xl hover:bg-white transition-colors shadow-sm"><IChevL sz={18} /></button>
+          <h3 className="text-lg font-bold text-gray-900">{MO[mo]} {yr}</h3>
+          <button onClick={nextMonth} className="p-2.5 rounded-xl hover:bg-white transition-colors shadow-sm"><IChevR sz={18} /></button>
         </div>
-        <div className="bg-white rounded-2xl border p-5 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">📊 Performance by Category</h3>
-          <div className="space-y-4">
-            {cats.map(c => {
-              const s = catStats[c];
-              if (s.total === 0) return null;
+        <div className="p-4">
+          <div className="grid grid-cols-7 gap-1 mb-2">{["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(d => <div key={d} className="text-center text-xs font-semibold text-gray-400 py-2">{d}</div>)}</div>
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: firstDay }).map((_, i) => <div key={`b${i}`} className="min-h-[80px] rounded-xl bg-gray-50/50" />)}
+            {Array.from({ length: days }).map((_, i) => {
+              const day = i + 1;
+              const ds = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const items = getItems(day);
+              const isToday = ds === today;
               return (
-                <div key={c} className="space-y-2">
-                  <div className="flex items-center justify-between"><span className="text-sm font-semibold text-gray-700">{c}</span><span className="text-sm text-gray-500">{s.total} exams · Best: {s.best}%</span></div>
-                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${s.avg >= 70 ? "bg-emerald-500" : s.avg >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${s.avg}%` }} /></div>
-                  <p className="text-xs text-gray-500">Average: {s.avg}%</p>
+                <div key={day} className={`min-h-[80px] p-1.5 rounded-xl border transition-all ${isToday ? "border-indigo-400 bg-indigo-50 shadow-md" : items.length > 0 ? "border-gray-200 bg-white hover:shadow-md" : "border-gray-100 bg-gray-50/30"}`}>
+                  <div className={`text-xs font-bold mb-1 ${isToday ? "text-indigo-600" : items.length > 0 ? "text-gray-800" : "text-gray-400"}`}>{day}</div>
+                  <div className="space-y-0.5">
+                    {items.slice(0, 3).map(it => <div key={it.k} className={`${it.c} px-1 py-0.5 rounded-md truncate text-[9px] font-medium flex items-center gap-0.5`}><span>{it.icon}</span><span>{it.t}</span></div>)}
+                    {items.length > 3 && <div className="text-[9px] text-gray-400 font-medium pl-1">+{items.length - 3} more</div>}
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 p-5">
-          <h3 className="text-lg font-bold text-blue-900 mb-3">📅 Google Calendar</h3>
-          <p className="text-sm text-blue-700 mb-4">Add study reminders</p>
-          <div className="space-y-3">
-            {["Daily Study", "Weekly Revision", "Mock Test"].map((title, i) => {
-              const start = new Date(); start.setDate(start.getDate() + i); start.setHours(9 + i, 0, 0);
-              const end = new Date(start); end.setHours(start.getHours() + 1);
-              const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${start.toISOString().replace(/[-:]/g, "").split(".")[0]}Z/${end.toISOString().replace(/[-:]/g, "").split(".")[0]}Z`;
-              return (
-                <a key={title} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-3 bg-white rounded-xl border border-blue-200 hover:border-blue-400 transition-colors">
-                  <div className="flex items-center gap-3"><div className="bg-blue-100 p-2 rounded-lg"><ICalendar sz={16} cls="text-blue-600" /></div><span className="text-sm font-medium text-gray-700">{title}</span></div>
-                  <span className="text-xs text-blue-600 font-medium">Add →</span>
-                </a>
-              );
-            })}
-          </div>
+        <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex gap-4">
+          {tab === "topics" && (<>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-100" /><span className="text-xs text-gray-500">Studied</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-100" /><span className="text-xs text-gray-500">Revision Due</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-100" /><span className="text-xs text-gray-500">Due Today</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-100" /><span className="text-xs text-gray-500">Overdue</span></div>
+          </>)}
+          {tab === "exams" && (<>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-100" /><span className="text-xs text-gray-500">≥70%</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-100" /><span className="text-xs text-gray-500">50-69%</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-100" /><span className="text-xs text-gray-500">&lt;50%</span></div>
+          </>)}
         </div>
       </div>
     );
   };
 
-  // ═══════════════ DAILY TRACKER TAB ═══════════════
-  const DailyTracker = () => {
-    const [selectedDate, setSelectedDate] = useState(iso());
-    const task = getDaily(selectedDate) || { id: uid(), date: selectedDate, answerWriting: false, mcqSolved: 0, caMcqSolved: 0, notes: "" };
-    const updateTask = (updates: Partial<DailyTask>) => { saveDaily({ ...task, ...updates }); };
-    const weekDays = useMemo(() => { const days = []; for (let i = -3; i <= 3; i++) { const d = new Date(); d.setDate(d.getDate() + i); days.push(d.toISOString().split("T")[0]); } return days; }, []);
-    const streak = useMemo(() => { let count = 0; for (let i = 0; i < 30; i++) { const d = new Date(); d.setDate(d.getDate() - i); const ds = d.toISOString().split("T")[0]; const t = daily.find(x => x.date === ds); if (t && (t.answerWriting || t.mcqSolved > 0 || t.caMcqSolved > 0)) count++; else break; } return count; }, [daily]);
+  // Notifications Component
+  const NotificationsPanel = () => {
+    const todayStr = iso();
+    const dueToday = topics.filter(t => getSt(t) === "due");
+    const overdue = topics.filter(t => getSt(t) === "over");
+    const scheduled = topics.filter(t => t.sched && !t.studied);
+    const examsToday = exams.filter(e => e.date === todayStr);
+    const todayTask = daily.find(d => d.date === todayStr);
+    const completedToday = todayTask && (todayTask.answerWriting || todayTask.mcqSolved > 0 || todayTask.caMcqSolved > 0);
+    const notifications = [
+      ...overdue.map(t => ({ id: t.id, type: "urgent" as const, icon: "🚨", title: "Overdue!", desc: `${t.title} is ${Math.abs(daysDiff(t.next))} days overdue`, time: "Now" })),
+      ...dueToday.map(t => ({ id: t.id, type: "warning" as const, icon: "⏰", title: "Due Today", desc: `Revise: ${t.title}`, time: "Today" })),
+      ...scheduled.map(t => ({ id: t.id, type: "info" as const, icon: "📅", title: "Scheduled", desc: `Mark studied: ${t.title}`, time: "Pending" })),
+      ...examsToday.map(e => ({ id: e.id, type: "success" as const, icon: "📝", title: "Exam Today", desc: `${e.name} (${e.pct}%)`, time: "Today" })),
+      ...(completedToday ? [{ id: "daily", type: "success" as const, icon: "✅", title: "Daily Tasks Done", desc: "Great job staying consistent!", time: "Today" }] : [])
+    ];
     return (
       <div className="space-y-6">
-        <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl border border-orange-200 p-5">
-          <div className="flex items-center justify-between">
-            <div><h3 className="text-lg font-bold text-orange-900">🔥 Current Streak</h3><p className="text-sm text-orange-700">Days with at least one task completed</p></div>
-            <div className="text-4xl font-black text-orange-600">{streak} <span className="text-lg font-medium text-orange-500">days</span></div>
+        <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 rounded-3xl border border-indigo-100 p-6 shadow-lg">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">👋 Hello, {user.name.split(" ")[0]}!</h2>
+              <p className="text-gray-600 mt-1">Here's what's happening today</p>
+            </div>
+            <div className="text-right">
+              <p className="text-3xl font-black text-indigo-600">{notifications.filter(n => n.type === "urgent" || n.type === "warning").length}</p>
+              <p className="text-xs text-gray-500 font-medium">Needs Attention</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 border border-indigo-100">
+              <p className="text-2xl font-bold text-red-600">{overdue.length}</p>
+              <p className="text-xs text-gray-500 font-medium">Overdue</p>
+            </div>
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 border border-amber-100">
+              <p className="text-2xl font-bold text-amber-600">{dueToday.length}</p>
+              <p className="text-xs text-gray-500 font-medium">Due Today</p>
+            </div>
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 border border-blue-100">
+              <p className="text-2xl font-bold text-blue-600">{scheduled.length}</p>
+              <p className="text-xs text-gray-500 font-medium">Scheduled</p>
+            </div>
+            <div className={`bg-white/80 backdrop-blur-sm rounded-2xl p-4 border ${completedToday ? "border-emerald-100" : "border-gray-100"}`}>
+              <p className={`text-2xl font-bold ${completedToday ? "text-emerald-600" : "text-gray-400"}`}>{completedToday ? "✓" : "○"}</p>
+              <p className="text-xs text-gray-500 font-medium">Daily Tasks</p>
+            </div>
           </div>
         </div>
-        <div className="bg-white rounded-2xl border p-4 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-900 mb-3">📅 Select Date</h3>
-          <div className="flex gap-2 overflow-x-auto pb-2">
-            {weekDays.map(d => {
-              const dt = new Date(d + "T00:00:00");
-              const isToday = d === iso();
-              const isSelected = d === selectedDate;
-              const t = daily.find(x => x.date === d);
-              const completed = t && (t.answerWriting || t.mcqSolved > 0 || t.caMcqSolved > 0);
-              return (
-                <button key={d} onClick={() => setSelectedDate(d)} className={`flex-shrink-0 p-3 rounded-xl border-2 transition-all ${isSelected ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:border-gray-300"} ${completed ? "ring-2 ring-emerald-400" : ""}`}>
-                  <p className={`text-xs font-medium ${isToday ? "text-indigo-600" : "text-gray-500"}`}>{isToday ? "Today" : dt.toLocaleDateString("en-US", { weekday: "short" })}</p>
-                  <p className="text-lg font-bold text-gray-900">{dt.getDate()}</p>
-                  {completed && <p className="text-[10px] text-emerald-600 font-medium">✓ Done</p>}
-                </button>
-              );
-            })}
+        <div className="bg-white rounded-3xl border border-gray-200 shadow-xl overflow-hidden">
+          <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-purple-50">
+            <h3 className="text-lg font-bold text-gray-900">📬 Today's Activity</h3>
+            <p className="text-sm text-gray-500 mt-1">{fmt(todayStr)}</p>
           </div>
-        </div>
-        <div className="bg-white rounded-2xl border p-5 shadow-sm space-y-4">
-          <h3 className="text-lg font-bold text-gray-900">✅ Daily Tasks - {fmt(selectedDate)}</h3>
-          <div className="flex items-center justify-between p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-            <div className="flex items-center gap-3"><div className={`p-2 rounded-lg ${task.answerWriting ? "bg-indigo-500" : "bg-white border border-indigo-300"}`}><ICheck sz={16} cls={task.answerWriting ? "text-white" : "text-indigo-400"} /></div><span className="font-medium text-gray-700">Answer Writing Practice</span></div>
-            <button onClick={() => updateTask({ answerWriting: !task.answerWriting })} className={`px-4 py-2 rounded-xl text-sm font-semibold ${task.answerWriting ? "bg-indigo-500 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>{task.answerWriting ? "✓ Completed" : "Mark Done"}</button>
+          <div className="divide-y divide-gray-100">
+            {notifications.length === 0 ? (
+              <div className="p-12 text-center">
+                <div className="w-20 h-20 bg-gradient-to-br from-emerald-100 to-teal-100 rounded-3xl mx-auto mb-4 flex items-center justify-center"><span className="text-4xl">🎉</span></div>
+                <h4 className="text-lg font-bold text-gray-900 mb-2">All Caught Up!</h4>
+                <p className="text-gray-500">No pending tasks for today. Great job!</p>
+              </div>
+            ) : (
+              notifications.map(n => (
+                <div key={n.id} className={`p-4 hover:bg-gray-50 transition-colors flex items-start gap-4 ${n.type === "urgent" ? "bg-red-50/50" : n.type === "warning" ? "bg-amber-50/50" : ""}`}>
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 ${n.type === "urgent" ? "bg-red-100" : n.type === "warning" ? "bg-amber-100" : n.type === "success" ? "bg-emerald-100" : "bg-blue-100"}`}>{n.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-gray-900">{n.title}</h4>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${n.type === "urgent" ? "bg-red-100 text-red-700" : n.type === "warning" ? "bg-amber-100 text-amber-700" : n.type === "success" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>{n.time}</span>
+                    </div>
+                    <p className="text-sm text-gray-600 mt-1">{n.desc}</p>
+                  </div>
+                  {n.type === "urgent" || n.type === "warning" ? (
+                    <button onClick={() => { setTab("topics"); setExpId(n.id); }} className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">View</button>
+                  ) : null}
+                </div>
+              ))
+            )}
           </div>
-          <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-            <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-emerald-500"><ITarget sz={16} cls="text-white" /></div><span className="font-medium text-gray-700">MCQs Solved</span></div><span className="text-2xl font-bold text-emerald-600">{task.mcqSolved}</span></div>
-            <input type="range" min="0" max="100" value={task.mcqSolved} onChange={e => updateTask({ mcqSolved: +e.target.value })} className="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer" />
-          </div>
-          <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
-            <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-amber-500"><ITarget sz={16} cls="text-white" /></div><span className="font-medium text-gray-700">CA MCQs Solved</span></div><span className="text-2xl font-bold text-amber-600">{task.caMcqSolved}</span></div>
-            <input type="range" min="0" max="50" value={task.caMcqSolved} onChange={e => updateTask({ caMcqSolved: +e.target.value })} className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer" />
-          </div>
-          <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">📝 Notes</label><textarea value={task.notes} onChange={e => updateTask({ notes: e.target.value })} placeholder="What did you study today?" rows={3} className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none resize-none" /></div>
         </div>
       </div>
     );
   };
 
-  // ══════════════════════ RENDER ══════════════════════
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-indigo-50/30">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
+      {/* Animated background blobs */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-purple-200/30 rounded-full blur-3xl animate-float" />
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-200/30 rounded-full blur-3xl animate-float" style={{ animationDelay: '1s' }} />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-80 h-80 bg-pink-200/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '2s' }} />
+      </div>
+
       {/* HEADER */}
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2.5 rounded-2xl"><span className="text-xl">🧠</span></div>
-            <div><h1 className="text-xl font-extrabold">Space<span className="text-indigo-600">Rev</span></h1><p className="text-[10px] text-gray-400">by Rupam</p></div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gray-50 border text-xs"><IUser sz={14} cls="text-gray-400" /><span className="font-medium text-gray-600">{user.name}</span></div>
-            {user.mode === "supabase" && <span className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold"><ICloud sz={12} />Synced</span>}
-            <button onClick={onLogout} className="p-2.5 rounded-xl text-gray-400 hover:text-red-500 hover:bg-red-50"><ILogOut sz={18} /></button>
-            <button onClick={() => { if (tab === "topics") { setEditT(null); setModal("topic"); } else if (tab === "exams") { setEditE(null); setModal("exam"); } else if (tab === "memory") { setEditM(null); setModal("memory"); } }} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600"><IPlus sz={16} /></button>
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-lg">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-3 rounded-2xl shadow-lg"><span className="text-2xl animate-float">🧠</span></div>
+                <span className="absolute -top-1 -right-1 text-xl animate-pulse">✨</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-black tracking-tight">Space<span className="bg-gradient-to-r from-indigo-500 to-purple-600 bg-clip-text text-transparent">Rev</span></h1>
+                <p className="text-[10px] text-gray-500 font-medium">by Rupam</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/80 backdrop-blur-sm border border-gray-200 shadow-sm">
+                <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center text-white font-bold text-sm">{user.name.charAt(0).toUpperCase()}</div>
+                <span className="font-semibold text-gray-700 text-sm">{user.name}</span>
+              </div>
+              {user.mode === "supabase" && (<span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold border border-emerald-200 shadow-sm"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-dot" />Synced</span>)}
+              <button onClick={onLogout} className="p-2.5 rounded-2xl text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all"><ILogOut sz={18} /></button>
+              <button onClick={() => { if (tab === "topics") { setEditT(null); setModal("topic"); } else if (tab === "exams") { setEditE(null); setModal("exam"); } else if (tab === "memory") { setEditM(null); setModal("memory"); } }} className="px-5 py-2.5 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 shadow-lg transition-all flex items-center gap-2"><IPlus sz={16} /><span className="hidden sm:inline">Add New</span></button>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8 relative z-10">
         {/* TABS */}
-        <div className="flex gap-2 bg-white rounded-2xl p-1.5 border w-fit">
-          {[["topics", "📚", "Topics", topics.length], ["exams", "📝", "Exams", exams.length], ["memory", "🧠", "Memory", memory.length], ["stats", "📊", "Stats", exams.length], ["daily", "✅", "Daily", daily.length]].map(([k, e, l, n]) => (
-            <button key={k} onClick={() => { setTab(k as Tab); setCf("all"); }} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold ${tab === k ? (k === "topics" ? "bg-indigo-100 text-indigo-700" : k === "exams" ? "bg-amber-100 text-amber-700" : k === "stats" ? "bg-purple-100 text-purple-700" : k === "daily" ? "bg-emerald-100 text-emerald-700" : "bg-teal-100 text-teal-700") : "text-gray-500 hover:bg-gray-50"}`}>{e} {l}{Number(n) > 0 && <span className="text-[10px] opacity-70">({n})</span>}</button>
+        <div className="flex gap-2 bg-white/80 backdrop-blur-xl rounded-2xl p-1.5 border border-gray-200/50 shadow-xl w-fit">
+          {[["topics", "📚", "Topics", topics.length], ["exams", "📝", "Exams", exams.length], ["memory", "🧠", "Memory", memory.length], ["stats", "📊", "Stats", exams.length], ["daily", "✅", "Daily", daily.length], ["notifications", "🔔", "Today", notifCount]].map(([k, e, l, n]) => (
+            <button key={k} onClick={() => { setTab(k as Tab); setCf("all"); }} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === k ? (k === "topics" ? "bg-indigo-100 text-indigo-700 shadow-md" : k === "exams" ? "bg-amber-100 text-amber-700 shadow-md" : k === "stats" ? "bg-purple-100 text-purple-700 shadow-md" : k === "daily" ? "bg-emerald-100 text-emerald-700 shadow-md" : k === "notifications" ? "bg-pink-100 text-pink-700 shadow-md" : "bg-teal-100 text-teal-700 shadow-md") : "text-gray-500 hover:bg-gray-100"}`}>
+              <span className="text-lg">{e}</span>
+              <span>{l}</span>
+              {Number(n) > 0 && <span className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${tab === k ? "bg-white/60" : "bg-gray-200"}`}>{n}</span>}
+            </button>
           ))}
         </div>
+
+        {/* VIEW TOGGLE FOR TOPICS */}
+        {tab === "topics" && (
+          <div className="flex bg-white/80 backdrop-blur-xl rounded-xl p-1 border border-gray-200/50 shadow-sm w-fit">
+            <button onClick={() => setView("list")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "list" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>📋 List</button>
+            <button onClick={() => setView("cal")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "cal" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>📅 Calendar</button>
+          </div>
+        )}
+
+        {/* NOTIFICATIONS TAB */}
+        {tab === "notifications" && <NotificationsPanel />}
 
         {/* STATS TAB */}
         {tab === "stats" && <StatsTab />}
@@ -638,42 +456,58 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
         {/* DAILY TRACKER TAB */}
         {tab === "daily" && <DailyTracker />}
 
-        {/* TOPICS LIST */}
+        {/* CALENDAR VIEW FOR TOPICS */}
+        {tab === "topics" && view === "cal" && <CalendarView />}
+
+        {/* TOPICS LIST - Only show when view is list */}
         {tab === "topics" && view === "list" && (topics.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-3xl border"><div className="w-20 h-20 bg-indigo-50 rounded-3xl mx-auto mb-6 flex items-center justify-center"><span className="text-4xl">📚</span></div><h3 className="text-xl font-bold mb-2">No topics yet</h3><p className="text-gray-500 mb-8">Start tracking your revision</p><button onClick={() => { setEditT(null); setModal("topic"); }} className="px-6 py-3 rounded-xl text-white bg-indigo-600 font-semibold">+ Add Topic</button></div>
-        ) : fTopics.length === 0 ? <p className="text-center text-gray-400 py-12">No matches.</p> : (
-          <div className="space-y-3">
+          <div className="text-center py-20 bg-white rounded-3xl border shadow-lg">
+            <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-3xl mx-auto mb-6 flex items-center justify-center"><span className="text-4xl">📚</span></div>
+            <h3 className="text-2xl font-bold mb-2">No topics yet</h3>
+            <p className="text-gray-500 mb-8">Start tracking your revision journey</p>
+            <button onClick={() => { setEditT(null); setModal("topic"); }} className="px-6 py-3 rounded-2xl text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 font-semibold shadow-lg transition-all">+ Add Topic</button>
+          </div>
+        ) : fTopics.length === 0 ? <p className="text-center text-gray-400 py-12">No matches found.</p> : (
+          <div className="space-y-4">
             {fTopics.map(t => {
               const s = getSt(t); const exp = expId === t.id; const prog = Math.min((t.lvl / IV.length) * 100, 100);
-              const badge = s === "sched" ? "bg-violet-100 text-violet-700" : s === "over" ? "bg-red-100 text-red-700" : s === "due" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700";
+              const badge = s === "sched" ? "badge-violet" : s === "over" ? "badge-red" : s === "due" ? "badge-amber" : "badge-emerald";
               const badgeText = s === "sched" ? "Scheduled" : s === "over" ? `${Math.abs(daysDiff(t.next))}d overdue` : s === "due" ? "Due today" : `In ${daysDiff(t.next)}d`;
               const border = s === "sched" ? "border-l-violet-400" : s === "over" ? "border-l-red-400" : s === "due" ? "border-l-amber-400" : "border-l-emerald-400";
               return (
-                <div key={t.id} className={`bg-white rounded-2xl border shadow-sm border-l-4 ${border}`}>
-                  <div className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap"><h3 className="font-semibold">{t.title}</h3><span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${badge}`}>{badgeText}</span></div>
-                        <div className="mt-2 flex gap-2 flex-wrap">{t.subject && <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 text-xs">{t.subject}</span>}{t.cat && <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{t.cat}</span>}</div>
-                        <p className="mt-2 text-xs text-gray-500">Studied: {fmt(t.date)} · Next: {fmt(t.next)} · Level: {t.lvl}/{IV.length}</p>
-                        <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full" style={{ width: `${prog}%` }} /></div>
+                <div key={t.id} className={`bg-white rounded-3xl border border-gray-100 p-5 shadow-sm hover:shadow-xl transition-all border-l-4 ${border} group`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2.5 flex-wrap mb-2">
+                        <h3 className="font-bold text-gray-900 text-lg truncate">{t.title}</h3>
+                        <span className={`badge ${badge}`}>{badgeText}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        {s === "sched" && <><button onClick={() => markStudied(t.id, true)} className="p-2 rounded-xl bg-emerald-50 text-emerald-600"><ICheck sz={16} /></button><button onClick={() => markStudied(t.id, false)} className="p-2 rounded-xl bg-red-50 text-red-600"><IX sz={16} /></button></>}
-                        {(s === "over" || s === "due") && <button onClick={() => markRevised(t.id)} className="p-2 rounded-xl bg-emerald-50 text-emerald-600"><ICheck sz={16} /></button>}
-                        {s === "soon" && <button onClick={() => markRevised(t.id)} className="p-2 rounded-xl bg-blue-50 text-blue-600"><IRefresh sz={16} /></button>}
-                        {t.revs.length > 0 && <button onClick={() => undoRev(t.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100"><IUndo sz={16} /></button>}
-                        <button onClick={() => { setEditT(t); setModal("topic"); }} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100"><IEdit sz={16} /></button>
-                        <button onClick={() => delTopic(t.id)} className="p-2 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500"><ITrash sz={16} /></button>
-                        <button onClick={() => setExpId(exp ? null : t.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100">{exp ? <IChevU sz={16} /> : <IChevD sz={16} />}</button>
+                      <div className="flex gap-2 flex-wrap mb-3">
+                        {t.subject && <span className="px-3 py-1 rounded-xl bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-100">{t.subject}</span>}
+                        {t.cat && <span className="px-3 py-1 rounded-xl bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200">{t.cat}</span>}
                       </div>
+                      <div className="flex items-center gap-4 text-xs text-gray-500 font-medium mb-3">
+                        <span className="flex items-center gap-1.5"><span>📅</span>Studied: {fmt(t.date)}</span>
+                        <span className="flex items-center gap-1.5"><span>⏰</span>Next: {fmt(t.next)}</span>
+                        <span className="flex items-center gap-1.5"><span>🎯</span>Lv {t.lvl}/{IV.length}</span>
+                      </div>
+                      <div className="progress"><div className={`progress-bar ${t.lvl >= 5 ? "progress-bar-emerald" : t.lvl >= 3 ? "progress-bar-amber" : ""}`} style={{ width: `${prog}%` }} /></div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {s === "sched" && <><button onClick={() => markStudied(t.id, true)} className="p-2 rounded-xl bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-colors"><ICheck sz={16} /></button><button onClick={() => markStudied(t.id, false)} className="p-2 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 transition-colors"><IX sz={16} /></button></>}
+                      {(s === "over" || s === "due") && <button onClick={() => markRevised(t.id)} className="p-2 rounded-xl bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-colors"><ICheck sz={16} /></button>}
+                      {s === "soon" && <button onClick={() => markRevised(t.id)} className="p-2 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"><IRefresh sz={16} /></button>}
+                      {t.revs.length > 0 && <button onClick={() => undoRev(t.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors"><IUndo sz={16} /></button>}
+                      <button onClick={() => { setEditT(t); setModal("topic"); }} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors"><IEdit sz={16} /></button>
+                      <button onClick={() => delTopic(t.id)} className="p-2 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"><ITrash sz={16} /></button>
+                      <button onClick={() => setExpId(exp ? null : t.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors">{exp ? <IChevU sz={16} /> : <IChevD sz={16} />}</button>
                     </div>
                   </div>
                   {exp && (
-                    <div className="px-4 pb-4 border-t pt-4 space-y-4">
+                    <div className="px-5 pb-5 border-t border-gray-100 pt-4 space-y-4">
                       {t.desc && <p className="text-sm text-gray-700">{t.desc}</p>}
-                      {t.links.length > 0 && <div className="flex flex-wrap gap-2">{t.links.map(l => <a key={l.id} href={l.url} target="_blank" className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-sm">🔗 {l.label || "Link"}</a>)}</div>}
-                      {t.revs.length > 0 && <div className="flex flex-wrap gap-2">{t.revs.map((r, i) => <span key={i} className={`px-3 py-1.5 rounded-lg text-xs ${r.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>#{i + 1} {fmt(r.date)} {r.ok ? "✓" : "✕"}</span>)}{t.revs.map((r, i) => <button key={`e${i}`} onClick={() => setRevEdit({ tid: t.id, revIdx: i, date: r.date })} className="p-1 text-gray-400 hover:text-indigo-600"><IEdit2 sz={12} /></button>)}</div>}
+                      {t.links.length > 0 && <div className="flex flex-wrap gap-2">{t.links.map(l => <a key={l.id} href={l.url} target="_blank" className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors">🔗 {l.label || "Link"}</a>)}</div>}
+                      {t.revs.length > 0 && <div className="flex flex-wrap gap-2">{t.revs.map((r, i) => <span key={i} className={`px-3 py-1.5 rounded-lg text-xs font-medium ${r.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>#{i + 1} {fmt(r.date)} {r.ok ? "✓" : "✕"}</span>)}{t.revs.map((r, i) => <button key={`e${i}`} onClick={() => setRevEdit({ tid: t.id, revIdx: i, date: r.date })} className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"><IEdit2 sz={12} /></button>)}</div>}
                     </div>
                   )}
                 </div>
@@ -684,38 +518,56 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
 
         {/* EXAMS LIST */}
         {tab === "exams" && view === "list" && (exams.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-3xl border"><div className="w-20 h-20 bg-amber-50 rounded-3xl mx-auto mb-6 flex items-center justify-center"><span className="text-4xl">📝</span></div><h3 className="text-xl font-bold mb-2">No exams yet</h3><p className="text-gray-500 mb-8">Track scores & get AI feedback</p><button onClick={() => { setEditE(null); setModal("exam"); }} className="px-6 py-3 rounded-xl text-white bg-amber-600 font-semibold">+ Add Exam</button></div>
-        ) : fExams.length === 0 ? <p className="text-center text-gray-400 py-12">No matches.</p> : (
-          <div className="space-y-3">
+          <div className="text-center py-20 bg-white rounded-3xl border shadow-lg">
+            <div className="w-20 h-20 bg-gradient-to-br from-amber-100 to-orange-100 rounded-3xl mx-auto mb-6 flex items-center justify-center"><span className="text-4xl">📝</span></div>
+            <h3 className="text-2xl font-bold mb-2">No exams yet</h3>
+            <p className="text-gray-500 mb-8">Track scores & get AI feedback</p>
+            <button onClick={() => { setEditE(null); setModal("exam"); }} className="px-6 py-3 rounded-2xl text-white bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 font-semibold shadow-lg transition-all">+ Add Exam</button>
+          </div>
+        ) : fExams.length === 0 ? <p className="text-center text-gray-400 py-12">No matches found.</p> : (
+          <div className="space-y-4">
             {fExams.map(e => {
               const exp = expId === e.id;
-              const gc = e.pct >= 70 ? "text-emerald-600 bg-emerald-50" : e.pct >= 50 ? "text-amber-600 bg-amber-50" : "text-red-600 bg-red-50";
-              const barc = e.pct >= 70 ? "bg-emerald-500" : e.pct >= 50 ? "bg-amber-500" : "bg-red-500";
+              const gc = e.pct >= 70 ? "badge-emerald" : e.pct >= 50 ? "badge-amber" : "badge-red";
+              const barc = e.pct >= 70 ? "progress-bar-emerald" : e.pct >= 50 ? "progress-bar-amber" : "progress-bar-red";
               const bc = e.pct >= 70 ? "border-l-emerald-400" : e.pct >= 50 ? "border-l-amber-400" : "border-l-red-400";
               return (
-                <div key={e.id} className={`bg-white rounded-2xl border shadow-sm border-l-4 ${bc}`}>
-                  <div className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap"><h3 className="font-semibold">{e.name}</h3><span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${gc}`}>{e.grade}</span></div>
-                        <div className="mt-2 flex gap-2 flex-wrap">{e.subject && <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 text-xs">{e.subject}</span>}{e.cat && <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{e.cat}</span>}</div>
-                        <p className="mt-2 text-xs text-gray-500">{fmt(e.date)} · {e.got}/{e.max} · {e.pct}%</p>
-                        <div className="mt-3 h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full ${barc} rounded-full`} style={{ width: `${e.pct}%` }} /></div>
+                <div key={e.id} className={`bg-white rounded-3xl border border-gray-100 p-5 shadow-sm hover:shadow-xl transition-all border-l-4 ${bc} group`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2.5 flex-wrap mb-2">
+                        <h3 className="font-bold text-gray-900 text-lg truncate">{e.name}</h3>
+                        <span className={`badge ${gc}`}>{e.grade}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => { setEditE(e); setModal("exam"); }} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100"><IEdit sz={16} /></button>
-                        <button onClick={() => delExam(e.id)} className="p-2 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500"><ITrash sz={16} /></button>
-                        <button onClick={() => setExpId(exp ? null : e.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100">{exp ? <IChevU sz={16} /> : <IChevD sz={16} />}</button>
+                      <div className="flex gap-2 flex-wrap mb-3">
+                        {e.subject && <span className="px-3 py-1 rounded-xl bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-100">{e.subject}</span>}
+                        {e.cat && <span className="px-3 py-1 rounded-xl bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200">{e.cat}</span>}
                       </div>
+                      <div className="flex items-center gap-4 text-xs text-gray-500 font-medium mb-3">
+                        <span className="flex items-center gap-1.5"><span>📅</span>{fmt(e.date)}</span>
+                        <span className="flex items-center gap-1.5"><span>📊</span>{e.got}/{e.max}</span>
+                        <span className="flex items-center gap-1.5"><span>🎯</span>{e.pct}%</span>
+                      </div>
+                      <div className="progress"><div className={`progress-bar ${barc}`} style={{ width: `${e.pct}%` }} /></div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => { setEditE(e); setModal("exam"); }} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors"><IEdit sz={16} /></button>
+                      <button onClick={() => delExam(e.id)} className="p-2 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"><ITrash sz={16} /></button>
+                      <button onClick={() => setExpId(exp ? null : e.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors">{exp ? <IChevU sz={16} /> : <IChevD sz={16} />}</button>
                     </div>
                   </div>
                   {exp && (
-                    <div className="px-4 pb-4 border-t pt-4 space-y-4">
+                    <div className="px-5 pb-5 border-t border-gray-100 pt-4 space-y-4">
                       {e.desc && <p className="text-sm text-gray-700">{e.desc}</p>}
-                      {e.links.length > 0 && <div className="flex flex-wrap gap-2">{e.links.map(l => <a key={l.id} href={l.url} target="_blank" className="px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm">🔗 {l.label || "Link"}</a>)}</div>}
-                      <div className="bg-purple-50 rounded-2xl p-5 border border-purple-100">
+                      {e.links.length > 0 && <div className="flex flex-wrap gap-2">{e.links.map(l => <a key={l.id} href={l.url} target="_blank" className="px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm font-medium hover:bg-amber-100 transition-colors">🔗 {l.label || "Link"}</a>)}</div>}
+                      <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl p-5 border border-purple-100">
                         <h4 className="text-sm font-bold text-purple-800 mb-3">✨ AI Analysis</h4>
-                        {e.answer ? (<><button onClick={() => runAI(e.id)} disabled={aiId === e.id} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-600 disabled:opacity-50 mb-3">{aiId === e.id ? "⏳ Analyzing..." : "✨ Analyze with AI"}</button>{e.ai && <div className="bg-white border border-purple-200 rounded-xl p-4 text-sm text-gray-800 whitespace-pre-wrap">{e.ai}</div>}</>) : <p className="text-sm text-purple-600/70">Add answer text to enable AI</p>}
+                        {e.answer ? (
+                          <>
+                            <button onClick={() => runAI(e.id)} disabled={aiId === e.id} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 transition-colors mb-3">{aiId === e.id ? "⏳ Analyzing..." : "✨ Analyze with AI"}</button>
+                            {e.ai && <div className="bg-white border border-purple-200 rounded-xl p-4 text-sm text-gray-800 whitespace-pre-wrap">{e.ai}</div>}
+                          </>
+                        ) : <p className="text-sm text-purple-600/70">Add answer text to enable AI</p>}
                       </div>
                     </div>
                   )}
@@ -727,28 +579,34 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
 
         {/* MEMORY LIST */}
         {tab === "memory" && (memory.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-3xl border"><div className="w-20 h-20 bg-teal-50 rounded-3xl mx-auto mb-6 flex items-center justify-center"><span className="text-4xl">🧠</span></div><h3 className="text-xl font-bold mb-2">No memory items yet</h3><p className="text-gray-500 mb-8">Store thinkers, concepts, key facts</p><button onClick={() => { setEditM(null); setModal("memory"); }} className="px-6 py-3 rounded-xl text-white bg-teal-600 font-semibold">+ Add Memory</button></div>
-        ) : fMemory.length === 0 ? <p className="text-center text-gray-400 py-12">No matches.</p> : (
-          <div className="space-y-3">
+          <div className="text-center py-20 bg-white rounded-3xl border shadow-lg">
+            <div className="w-20 h-20 bg-gradient-to-br from-teal-100 to-emerald-100 rounded-3xl mx-auto mb-6 flex items-center justify-center"><span className="text-4xl">🧠</span></div>
+            <h3 className="text-2xl font-bold mb-2">No memory items yet</h3>
+            <p className="text-gray-500 mb-8">Store thinkers, concepts, key facts</p>
+            <button onClick={() => { setEditM(null); setModal("memory"); }} className="px-6 py-3 rounded-2xl text-white bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 font-semibold shadow-lg transition-all">+ Add Memory</button>
+          </div>
+        ) : fMemory.length === 0 ? <p className="text-center text-gray-400 py-12">No matches found.</p> : (
+          <div className="space-y-4">
             {fMemory.map(m => {
               const exp = expId === m.id;
               return (
-                <div key={m.id} className="bg-white rounded-2xl border shadow-sm border-l-4 border-l-teal-400">
-                  <div className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap"><h3 className="font-semibold">{m.title}</h3>{m.cat && <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-700 border border-teal-200">{m.cat}</span>}</div>
-                        {m.tags.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{m.tags.map(t => <span key={t} className="px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">#{t}</span>)}</div>}
-                        <p className="mt-1.5 text-[11px] text-gray-400">Updated: {fmt(m.updated.split("T")[0])}</p>
+                <div key={m.id} className={`bg-white rounded-3xl border border-gray-100 p-5 shadow-sm hover:shadow-xl transition-all border-l-4 border-l-teal-400 group`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2.5 flex-wrap mb-2">
+                        <h3 className="font-bold text-gray-900 text-lg truncate">{m.title}</h3>
+                        {m.cat && <span className="badge badge-teal">{m.cat}</span>}
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => { setEditM(m); setModal("memory"); }} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100"><IEdit sz={16} /></button>
-                        <button onClick={() => delMem(m.id)} className="p-2 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500"><ITrash sz={16} /></button>
-                        <button onClick={() => setExpId(exp ? null : m.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100">{exp ? <IChevU sz={16} /> : <IChevD sz={16} />}</button>
-                      </div>
+                      {m.tags.length > 0 && <div className="flex flex-wrap gap-1.5 mb-3">{m.tags.map(t => <span key={t} className="px-3 py-1 rounded-xl bg-gray-100 text-gray-600 text-xs font-medium">#{t}</span>)}</div>}
+                      <p className="text-[11px] text-gray-400 font-medium">Updated: {fmt(m.updated.split("T")[0])}</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => { setEditM(m); setModal("memory"); }} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors"><IEdit sz={16} /></button>
+                      <button onClick={() => delMem(m.id)} className="p-2 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"><ITrash sz={16} /></button>
+                      <button onClick={() => setExpId(exp ? null : m.id)} className="p-2 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors">{exp ? <IChevU sz={16} /> : <IChevD sz={16} />}</button>
                     </div>
                   </div>
-                  {exp && <div className="px-4 pb-5 border-t pt-4"><div className="prose prose-sm max-w-none text-gray-800 leading-relaxed" dangerouslySetInnerHTML={{ __html: m.content }} /></div>}
+                  {exp && <div className="px-5 pb-5 border-t border-gray-100 pt-4"><div className="prose prose-sm max-w-none text-gray-800 leading-relaxed" dangerouslySetInnerHTML={{ __html: m.content }} /></div>}
                 </div>
               );
             })}
@@ -766,9 +624,9 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
                 <div className="space-y-4">
                   <div><label className="block text-sm font-semibold text-gray-700 mb-1.5">New Date</label><input type="date" value={revEdit.date} onChange={e => setRevEdit({ ...revEdit, date: e.target.value })} className="w-full px-4 py-3 rounded-xl border outline-none" /></div>
                   <div className="flex gap-3">
-                    <button onClick={() => deleteRev(revEdit.tid, revEdit.revIdx)} className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold text-white bg-red-500">Delete Revision</button>
-                    <button onClick={() => setRevEdit(null)} className="flex-1 px-4 py-3 rounded-xl text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-                    <button onClick={() => updateRevDate(revEdit.tid, revEdit.revIdx, revEdit.date)} className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold text-white bg-indigo-600">Save</button>
+                    <button onClick={() => deleteRev(revEdit.tid, revEdit.revIdx)} className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition-colors">Delete Revision</button>
+                    <button onClick={() => setRevEdit(null)} className="flex-1 px-4 py-3 rounded-xl text-sm text-gray-600 hover:bg-gray-100 transition-colors">Cancel</button>
+                    <button onClick={() => updateRevDate(revEdit.tid, revEdit.revIdx, revEdit.date)} className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">Save</button>
                   </div>
                 </div>
               </div>
@@ -777,7 +635,7 @@ function Dashboard({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
         })()}
       </main>
 
-      <footer className="max-w-5xl mx-auto px-4 py-8 text-center"><p className="text-xs text-gray-400">SpaceRev — by Rupam{user.mode === "supabase" ? " · ☁️ Real-time cloud sync" : " · 💾 Local storage"}</p></footer>
+      <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-8 text-center relative z-10"><p className="text-xs text-gray-400">SpaceRev — by Rupam{user.mode === "supabase" ? " · ☁️ Real-time cloud sync" : " · 💾 Local storage"}</p></footer>
 
       {modal === "topic" && <TopicForm />}
       {modal === "exam" && <ExamForm />}
